@@ -1,11 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
-
 @theme inline {
+  --font-mono: "Monaspace", ui-monospace, system-ui, sans-serif;
   --font-sans: Geist, ui-sans-serif, system-ui, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -53,7 +51,92 @@
   --border: oklch(0.922 0.004 286.32);
   --input: oklch(0.922 0.004 286.32);
   --ring: oklch(0.508 0.118 149.214);
+  --color-devconnect: oklch(79.2% 0.209 151.711);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.16 0.015 260.031);
+    --foreground: oklch(0.95 0.005 106.423);
+    --card: oklch(0.21 0.015 260.031);
+    --card-foreground: oklch(0.95 0.005 106.423);
+    --popover: oklch(0.21 0.015 260.031);
+    --popover-foreground: oklch(0.95 0.005 106.423);
+    --primary: oklch(0.68 0.15 149.214);
+    --primary-foreground: oklch(0.16 0.02 152.633);
+    --secondary: oklch(0.26 0.02 264.542);
+    --secondary-foreground: oklch(0.95 0.005 106.423);
+    --muted: oklch(0.26 0.02 264.542);
+    --muted-foreground: oklch(0.7 0.02 264.364);
+    --accent: oklch(0.3 0.05 155);
+    --accent-foreground: oklch(0.88 0.1 155);
+    --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.985 0.002 106.423);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.68 0.15 149.214);
+  }
 }
 
 * { @apply border-border; }
 body { @apply bg-background text-foreground; }
+
+@font-face {
+  font-family: "Monaspace";
+  src: url("/fonts/Monaspace-Neon.woff2") format("woff2");
+  font-weight: 100 900;   /* adjust to the weights you actually ship */
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist.ttf") format("truetype");
+  font-weight: 400 600;   /* adjust to the weights you actually ship */
+  font-style: normal;
+  font-display: swap;
+}
+.text-devconnect {
+  color: var(--color-devconnect)
+}
+
+.glow {
+    text-shadow:
+        0 0 0.15em color-mix(in srgb, currentColor 45%, var(--background) 55%),
+        0 0 0.35em color-mix(in srgb, currentColor 30%, var(--background) 70%),
+        0 0 0.6em color-mix(in srgb, currentColor 18%, var(--background) 82%);
+}
+
+.glow-sm {
+    text-shadow:
+        0 0 0.03em color-mix(in srgb, currentColor 75%, var(--background) 25%),
+        0 0 0.07em color-mix(in srgb, currentColor 75%, var(--background) 25%);
+}
+
+.flicker {
+    animation: flicker 4s infinite alternate;
+}
+
+@keyframes flicker {
+    /* Fully On — long steady stretches */
+    0%,
+    4%,
+    7%,
+    46%,
+    49%,
+    100% {
+        text-shadow:
+            0 0 0.05em color-mix(in srgb, currentColor 75%, var(--background) 25%),
+            0 0 0.1em color-mix(in srgb, currentColor 75%, var(--background) 25%);
+        opacity: 1;
+    }
+    /* The "Broken" Moments (Dim/Off) — kept at ~1% of the cycle so they
+       stay snappy regardless of the animation duration */
+    5%,
+    6%,
+    47%,
+    48% {
+        text-shadow: none;
+        opacity: 0.4;
+    }
+}

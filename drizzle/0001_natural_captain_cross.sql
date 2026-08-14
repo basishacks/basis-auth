@@ -1,0 +1,1 @@
+ALTER TABLE "authorization_requests" ADD COLUMN "initial_uri" text NOT NULL;

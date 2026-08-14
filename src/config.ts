@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { generateKeyPair, exportJWK, type JWK } from "jose";
 import { z } from "zod";
 
-const clientSchema = z.object({
+export const clientSchema = z.object({
   clientId: z.string().min(1),
   name: z.string().min(1).optional(),
   clientSecret: z.string().min(16).optional(),
@@ -11,7 +11,11 @@ const clientSchema = z.object({
   scopes: z.array(z.string().min(1)).default(["openid", "profile", "email"]),
   resources: z.array(z.string().min(1)).min(1),
   requireConsent: z.boolean().default(true),
+  filterMode: z.enum(["whitelist", "blacklist"]).nullable().default(null),
+  filterContent: z.array(z.string().min(1).transform((value) => value.trim().toLowerCase())).default([]),
 });
+
+export const clientInputSchema = clientSchema.omit({ clientId: true });
 
 const resourceSchema = z.object({
   audience: z.string().min(1),
@@ -28,7 +32,6 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().min(1),
   OIDC_ISSUER: z.url().transform((issuer) => issuer.replace(/\/$/, "")),
-  OIDC_UI_ORIGIN: z.url().optional(),
   OIDC_COOKIE_KEYS: z.string().min(32),
   OIDC_JWKS_JSON: z.string().optional(),
   OIDC_JWKS_FILE: z.string().optional(),
@@ -50,7 +53,6 @@ export interface AppConfig {
   port: number;
   databaseUrl: string;
   issuer: string;
-  uiOrigin: string;
   cookieKeys: string[];
   jwks: { keys: JWK[] };
   clients: ClientSeed[];
@@ -104,14 +106,6 @@ export async function loadConfig(source: NodeJS.ProcessEnv = process.env): Promi
   if (issuerUrl.pathname !== "/" || issuerUrl.search || issuerUrl.hash) {
     throw new Error("OIDC_ISSUER must be an origin without a path, query, or fragment");
   }
-  const uiOrigin = env.OIDC_UI_ORIGIN?.replace(/\/$/, "") ?? env.OIDC_ISSUER;
-  const uiOriginUrl = new URL(uiOrigin);
-  if (uiOriginUrl.pathname !== "/" || uiOriginUrl.search || uiOriginUrl.hash) {
-    throw new Error("OIDC_UI_ORIGIN must be an origin without a path, query, or fragment");
-  }
-  if (uiOriginUrl.protocol !== issuerUrl.protocol || uiOriginUrl.hostname !== issuerUrl.hostname) {
-    throw new Error("OIDC_UI_ORIGIN must use the same scheme and host as OIDC_ISSUER");
-  }
   const microsoftValues = [
     env.MICROSOFT_ISSUER,
     env.MICROSOFT_CLIENT_ID,
@@ -135,6 +129,9 @@ export async function loadConfig(source: NodeJS.ProcessEnv = process.env): Promi
     }
     if (!client.public && !client.clientSecret) {
       throw new Error(`Confidential client ${client.clientId} requires a client secret`);
+    }
+    if (client.filterMode === null && client.filterContent.length > 0) {
+      throw new Error(`Client ${client.clientId} requires filterMode when filterContent is set`);
     }
   }
 
@@ -165,7 +162,6 @@ export async function loadConfig(source: NodeJS.ProcessEnv = process.env): Promi
     port: env.PORT,
     databaseUrl: env.DATABASE_URL,
     issuer: env.OIDC_ISSUER,
-    uiOrigin,
     cookieKeys,
     jwks: await loadJwks(env),
     clients,

@@ -57,6 +57,7 @@ describe.skipIf(process.env.RUN_POSTGRES_TESTS !== "1")("OAuth flow with Postgre
 
   it("issues audience-bound tokens, rejects code replay, and detects refresh reuse", async () => {
     const user = await identity.upsertFromMicrosoft({
+      provider: "basischina-microsoft",
       issuer: "https://login.microsoftonline.com/tenant/v2.0",
       subject: "microsoft-subject",
       email: "user@example.edu",
@@ -65,6 +66,7 @@ describe.skipIf(process.env.RUN_POSTGRES_TESTS !== "1")("OAuth flow with Postgre
     });
     const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     const started = await oauth.startAuthorization({
+      initialUri: "/oauth/authorize",
       clientId: "portal",
       redirectUri: "https://portal.example.test/callback",
       responseType: "code",

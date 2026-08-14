@@ -1,10 +1,13 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import type { AppConfig } from "./config.js";
+import type { IdentityService } from "./identity.js";
 import type { MicrosoftService } from "./microsoft.js";
 import type { KeyService } from "./oauth/keys.js";
 import type { OAuthService } from "./oauth/service.js";
 import type { SessionService } from "./oauth/sessions.js";
+import { OAuthError } from "./oauth/errors.js";
 
 const config = {
   environment: "test",
@@ -18,6 +21,7 @@ const app = createApp(
   {} as OAuthService,
   { publicJwks: { keys: [{ kty: "RSA", kid: "test" }] } } as KeyService,
   {} as SessionService,
+  {} as IdentityService,
   {} as MicrosoftService,
 );
 
@@ -58,6 +62,7 @@ describe("unexpected backend failures", () => {
     {} as OAuthService,
     brokenKeys,
     {} as SessionService,
+    {} as IdentityService,
     {} as MicrosoftService,
   );
 
@@ -82,12 +87,439 @@ describe("unexpected backend failures", () => {
   });
 });
 
+describe("SSO account API", () => {
+  const user = {
+    id: "d2c3f635-527c-4c0a-bc1c-15d6af3f0946",
+    provider: "basischina-microsoft",
+    displayName: "Example User",
+    email: "user@example.test",
+    emailVerified: true,
+    picture: Buffer.from([137, 80, 78, 71]),
+    pictureContentType: "image/png",
+  };
+  const loginExpiresAt = new Date("2030-01-01T00:00:00.000Z");
+  const accountApp = createApp(
+    config,
+    {} as OAuthService,
+    { publicJwks: { keys: [] } } as unknown as KeyService,
+    { find: vi.fn().mockResolvedValue({ userId: user.id, expiresAt: loginExpiresAt }) } as unknown as SessionService,
+    { findUser: vi.fn().mockResolvedValue(user) } as unknown as IdentityService,
+    {} as MicrosoftService,
+  );
+
+  it("returns basic account data without embedding the profile picture", async () => {
+    const response = await accountApp.request("/api/me", {
+      headers: { Cookie: "basis_sso=session-token" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      id: user.id,
+      provider: user.provider,
+      name: user.displayName,
+      email: user.email,
+      emailVerified: true,
+      loginExpiresAt: loginExpiresAt.toISOString(),
+      picture: `/api/picture/${user.id}`,
+    });
+  });
+
+  it("streams a public stored profile picture", async () => {
+    const response = await accountApp.request(`/api/picture/${user.id}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("image/png");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(user.picture);
+  });
+});
+
+describe("authorization interactions", () => {
+  const csrfToken = (uid: string) =>
+    createHmac("sha256", config.cookieKeys[0]!).update(`interaction:${uid}`).digest("base64url");
+
+  it("clears the SSO session and returns the interaction to login", async () => {
+    const request = { id: "request-id" };
+    const oauth = {
+      getAuthorization: vi.fn().mockResolvedValue(request),
+      clearInteractionUser: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OAuthService;
+    const sessions = { destroy: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      sessions,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/logout", {
+      method: "POST",
+      headers: { Accept: "application/json", Cookie: "basis_sso=session-token; basis_bridge_id=interaction-token" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({});
+    expect(sessions.destroy).toHaveBeenCalledWith("session-token");
+    expect(oauth.clearInteractionUser).toHaveBeenCalledWith("request-id");
+    expect(response.headers.getSetCookie().join("\n")).toContain("basis_sso=");
+  });
+
+  it("redirects browser logout requests to the original authorization URL", async () => {
+    const request = { id: "request-id", initialUri: "/oauth/authorize?client_id=client&state=state" };
+    const oauth = {
+      getAuthorization: vi.fn().mockResolvedValue(request),
+      clearInteractionUser: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      { destroy: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/logout", {
+      headers: { Cookie: "basis_bridge_id=interaction-token" },
+    });
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(request.initialUri);
+  });
+
+  it("completes authorization when the user allows consent", async () => {
+    const request = { id: "request-id" };
+    const oauth = {
+      interaction: vi.fn().mockResolvedValue({ request }),
+      grantConsent: vi.fn().mockResolvedValue(undefined),
+      completeAuthorization: vi.fn().mockResolvedValue("https://client.example.test/callback?code=code"),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/interaction/request-id/consent", {
+      method: "POST",
+      headers: {
+        Cookie: "basis_bridge_id=valid-interaction",
+        "Content-Type": "application/json",
+        "x-csrf-token": csrfToken("request-id"),
+      },
+      body: JSON.stringify({ action: "allow" }),
+    });
+
+    expect(await response.json()).toEqual({ redirectTo: "https://client.example.test/callback?code=code" });
+    expect(oauth.grantConsent).toHaveBeenCalledWith(request);
+  });
+
+  it("returns the OAuth denial redirect when the user denies consent", async () => {
+    const request = { id: "request-id" };
+    const oauth = {
+      interaction: vi.fn().mockResolvedValue({ request }),
+      denyAuthorization: vi.fn().mockResolvedValue("https://client.example.test/callback?error=access_denied"),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/interaction/request-id/consent", {
+      method: "POST",
+      headers: {
+        Cookie: "basis_bridge_id=valid-interaction",
+        "Content-Type": "application/json",
+        "x-csrf-token": csrfToken("request-id"),
+      },
+      body: JSON.stringify({ action: "deny" }),
+    });
+
+    expect(await response.json()).toEqual({ redirectTo: "https://client.example.test/callback?error=access_denied" });
+    expect(oauth.denyAuthorization).toHaveBeenCalledWith(request);
+  });
+
+  it("returns the Microsoft redirect URL to frontend requests", async () => {
+    const oauth = {
+      interaction: vi.fn().mockResolvedValue({ request: { id: "request-id" } }),
+    } as unknown as OAuthService;
+    const microsoft = {
+      begin: vi.fn().mockResolvedValue(new URL("https://login.microsoftonline.com/authorize")),
+    } as unknown as MicrosoftService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      microsoft,
+    );
+
+    const response = await authorizationApp.request("/oauth/upstream/microsoft?uid=request-id", {
+      headers: { Accept: "application/json", Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(await response.json()).toEqual({ redirectTo: "https://login.microsoftonline.com/authorize" });
+  });
+
+  it("sends upstream Microsoft failures back to the stored authorization URL", async () => {
+    const oauth = {
+      interaction: vi.fn().mockRejectedValue(new OAuthError("invalid_request", "Interaction is invalid", 400)),
+      getAuthorization: vi.fn().mockResolvedValue({ initialUri: "/oauth/authorize?client_id=client" }),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/upstream/microsoft?uid=request-id", {
+      headers: { Accept: "application/json", Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(await response.json()).toEqual({ redirectTo: "/oauth/authorize?client_id=client" });
+    expect(response.headers.get("set-cookie")).toContain("basis_bridge_error=");
+  });
+
+  it("identifies authenticated interactions as consent pages", async () => {
+    const oauth = {
+      getAuthorization: vi.fn().mockResolvedValue({
+        id: "request-id",
+        userId: "user-id",
+        clientId: "client-id",
+        scopes: ["openid"],
+        resource: "resource-id",
+      }),
+      getClient: vi.fn().mockResolvedValue({ id: "client-id" }),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/interaction", {
+      headers: { Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(await response.json()).toMatchObject({ prompt: "consent" });
+  });
+
+  it("reuses a valid interaction cookie", async () => {
+    const oauth = {
+      getAuthorization: vi.fn().mockResolvedValue({ id: "request-id", initialUri: "/oauth/authorize" }),
+      startAuthorization: vi.fn(),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/authorize", {
+      headers: { Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(oauth.getAuthorization).toHaveBeenCalledWith("valid-interaction");
+    expect(oauth.startAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("starts a new interaction when the authorization URI changes", async () => {
+    const oauth = {
+      getAuthorization: vi.fn().mockResolvedValue({
+        id: "request-id",
+        initialUri: "/oauth/authorize?client_id=previous-client",
+      }),
+      startAuthorization: vi.fn().mockResolvedValue({ id: "new-request", interactionToken: "new-interaction" }),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      { find: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/authorize?client_id=new-client", {
+      headers: { Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(oauth.startAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({ initialUri: "/oauth/authorize?client_id=new-client" }),
+    );
+  });
+
+  it("replaces an expired interaction cookie", async () => {
+    const oauth = {
+      getAuthorization: vi
+        .fn()
+        .mockRejectedValue(new OAuthError("invalid_request", "Authorization request is invalid or expired", 400)),
+      startAuthorization: vi.fn().mockResolvedValue({ id: "request-id", interactionToken: "new-interaction" }),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      { find: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/authorize", {
+      headers: { Cookie: "basis_bridge_id=expired-interaction" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(oauth.startAuthorization).toHaveBeenCalledOnce();
+    expect(response.headers.get("set-cookie")).toContain("basis_bridge_id=new-interaction");
+  });
+
+  it("renders an existing bridge error instead of starting another interaction", async () => {
+    const oauth = {
+      getAuthorization: vi
+        .fn()
+        .mockRejectedValue(new OAuthError("invalid_request", "Authorization request is invalid or expired", 400)),
+      startAuthorization: vi.fn(),
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await authorizationApp.request("/oauth/authorize", {
+      headers: {
+        Cookie: "basis_bridge_id=expired-interaction; basis_bridge_error=eyJlcnJvciI6ImludmFsaWRfcmVxdWVzdCJ9",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(oauth.startAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("redirects back to authorize after Microsoft login", async () => {
+    const oauth = {
+      interaction: vi.fn().mockResolvedValue({
+        request: { id: "request-id", initialUri: "/oauth/authorize?client_id=client&state=state" },
+        client: {},
+      }),
+      attachUser: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OAuthService;
+    const microsoft = {
+      callback: vi.fn().mockResolvedValue({
+        authorizationRequestId: "request-id",
+        user: { id: "user-id", email: "user@example.test", disabled: false },
+      }),
+    } as unknown as MicrosoftService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      { create: vi.fn().mockResolvedValue("session-token") } as unknown as SessionService,
+      {} as IdentityService,
+      microsoft,
+    );
+
+    const response = await authorizationApp.request("/oauth/callback/microsoft?code=code&state=state", {
+      headers: { Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/oauth/authorize?client_id=client&state=state");
+    expect(oauth.attachUser).toHaveBeenCalledWith("request-id", "user-id", expect.any(Date));
+  });
+
+  it("returns a bridge error when a client blocks the Microsoft account", async () => {
+    const oauth = {
+      interaction: vi.fn().mockResolvedValue({
+        request: { id: "request-id" },
+        client: { filterMode: "whitelist", filterContent: ["allowed@example.test"] },
+      }),
+      getAuthorization: vi.fn().mockResolvedValue({ initialUri: "/oauth/authorize?client_id=client" }),
+      attachUser: vi.fn(),
+    } as unknown as OAuthService;
+    const sessions = { create: vi.fn() } as unknown as SessionService;
+    const microsoft = {
+      callback: vi.fn().mockResolvedValue({
+        authorizationRequestId: "request-id",
+        user: { id: "user-id", email: "blocked@example.test", disabled: false },
+      }),
+    } as unknown as MicrosoftService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      sessions,
+      {} as IdentityService,
+      microsoft,
+    );
+
+    const response = await authorizationApp.request("/oauth/callback/microsoft?code=code&state=state", {
+      headers: { Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/oauth/authorize?client_id=client");
+    expect(response.headers.get("set-cookie")).toContain("basis_bridge_error=");
+    expect(sessions.create).not.toHaveBeenCalled();
+    expect(oauth.attachUser).not.toHaveBeenCalled();
+  });
+
+  it("sends Microsoft callback failures back to the stored authorization URL", async () => {
+    const oauth = {
+      getAuthorization: vi.fn().mockResolvedValue({ initialUri: "/oauth/authorize?client_id=client" }),
+    } as unknown as OAuthService;
+    const microsoft = {
+      callback: vi.fn().mockRejectedValue(new Error("Microsoft callback failed")),
+    } as unknown as MicrosoftService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      microsoft,
+    );
+
+    const response = await authorizationApp.request("/oauth/callback/microsoft?code=code&state=state", {
+      headers: { Cookie: "basis_bridge_id=valid-interaction" },
+    });
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/oauth/authorize?client_id=client");
+    expect(response.headers.get("set-cookie")).toContain("basis_bridge_error=");
+  });
+});
+
 describe("not-found responses", () => {
-  it("renders a backend-owned HTML page for an unknown browser route", async () => {
+  it("returns JSON for an unknown browser route", async () => {
     const response = await app.request("/missing", { headers: { Accept: "text/html" } });
     expect(response.status).toBe(404);
-    expect(response.headers.get("content-type")).toContain("text/html");
-    expect(await response.text()).toContain("Page not found");
+    expect(await response.json()).toEqual({
+      error: "not_found",
+      error_description: "The requested resource does not exist",
+    });
   });
 
   it("returns JSON for an unknown API route", async () => {

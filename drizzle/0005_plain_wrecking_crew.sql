@@ -1,0 +1,1 @@
+ALTER TABLE "oidc_clients" ADD CONSTRAINT "oidc_clients_filter_mode_check" CHECK ("oidc_clients"."filter_mode" in ('whitelist', 'blacklist') or "oidc_clients"."filter_mode" is null);

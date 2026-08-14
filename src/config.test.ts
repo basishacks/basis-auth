@@ -24,14 +24,8 @@ describe("configuration", () => {
   it("normalizes the issuer and validates client resources", async () => {
     const config = await loadConfig(base);
     expect(config.issuer).toBe("https://auth.example.test");
-    expect(config.uiOrigin).toBe("https://auth.example.test");
     expect(config.clients[0]?.clientId).toBe("test-client");
     expect(config.jwks.keys[0]?.d).toBeTypeOf("string");
-  });
-
-  it("allows a separate same-host development UI origin", async () => {
-    const config = await loadConfig({ ...base, OIDC_UI_ORIGIN: "https://auth.example.test:5173/" });
-    expect(config.uiOrigin).toBe("https://auth.example.test:5173");
   });
 
   it("rejects clients referencing an unknown resource", async () => {
@@ -55,5 +49,23 @@ describe("configuration", () => {
     await expect(loadConfig({ ...base, MICROSOFT_CLIENT_ID: "client" })).rejects.toThrow(
       "must be set together",
     );
+  });
+
+  it("requires a filter mode when a client has filter content", async () => {
+    await expect(
+      loadConfig({
+        ...base,
+        OIDC_CLIENTS_JSON: JSON.stringify([
+          {
+            clientId: "filtered-client",
+            clientSecret: "a-sufficiently-long-secret",
+            redirectUris: ["https://client.example.test/callback"],
+            scopes: ["openid"],
+            resources: ["urn:basis:api:test"],
+            filterContent: ["student@example.test"],
+          },
+        ]),
+      }),
+    ).rejects.toThrow("requires filterMode");
   });
 });

@@ -1,5 +1,8 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
+  customType,
   index,
   jsonb,
   pgTable,
@@ -10,21 +13,29 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => "bytea",
+});
+
 export const users = pgTable(
   "users",
   {
     id: uuid("id").primaryKey(),
+    provider: text("provider").notNull(),
     upstreamIssuer: text("upstream_issuer").notNull(),
     upstreamSubject: text("upstream_subject").notNull(),
     email: text("email").notNull(),
     emailVerified: boolean("email_verified").notNull().default(false),
+    disabled: boolean("disabled").notNull().default(false),
     displayName: text("display_name"),
-    picture: text("picture"),
+    picture: bytea("picture"),
+    pictureContentType: text("picture_content_type"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     uniqueIndex("users_upstream_identity_unique").on(
+      table.provider,
       table.upstreamIssuer,
       table.upstreamSubject,
     ),
@@ -44,14 +55,25 @@ export const userPermissions = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.permission] })],
 );
 
-export const oidcClients = pgTable("oidc_clients", {
-  clientId: text("client_id").primaryKey(),
-  metadata: jsonb("metadata").notNull().$type<Record<string, unknown>>(),
-  secretHash: text("secret_hash"),
-  resources: jsonb("resources").notNull().$type<string[]>(),
-  requireConsent: boolean("require_consent").notNull().default(true),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const oidcClients = pgTable(
+  "oidc_clients",
+  {
+    clientId: text("client_id").primaryKey(),
+    metadata: jsonb("metadata").notNull().$type<Record<string, unknown>>(),
+    secretHash: text("secret_hash"),
+    resources: jsonb("resources").notNull().$type<string[]>(),
+    requireConsent: boolean("require_consent").notNull().default(true),
+    filterMode: text("filter_mode").$type<"whitelist" | "blacklist" | null>(),
+    filterContent: jsonb("filter_content").notNull().default([]).$type<string[]>(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "oidc_clients_filter_mode_check",
+      sql`${table.filterMode} in ('whitelist', 'blacklist') or ${table.filterMode} is null`,
+    ),
+  ],
+);
 
 export const resourceServers = pgTable("resource_servers", {
   audience: text("audience").primaryKey(),
@@ -77,6 +99,7 @@ export const authorizationRequests = pgTable(
   "authorization_requests",
   {
     id: uuid("id").primaryKey(),
+    initialUri: text("initial_uri").notNull(),
     interactionHash: text("interaction_hash").notNull(),
     clientId: text("client_id")
       .notNull()

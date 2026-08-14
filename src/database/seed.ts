@@ -70,6 +70,8 @@ export async function seedConfiguration(
         secretHash,
         resources: client.resources,
         requireConsent: client.requireConsent,
+        filterMode: client.filterMode,
+        filterContent: client.filterContent,
       })
       .onConflictDoUpdate({
         target: oidcClients.clientId,
@@ -78,6 +80,8 @@ export async function seedConfiguration(
           secretHash,
           resources: client.resources,
           requireConsent: client.requireConsent,
+          filterMode: client.filterMode,
+          filterContent: client.filterContent,
           updatedAt: new Date(),
         },
       });

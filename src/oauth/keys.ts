@@ -65,9 +65,12 @@ export async function createKeyService(config: AppConfig, identity: IdentityServ
     const account = await identity.findAccount(input.userId);
     if (!account) throw new Error("User no longer exists");
     const claims = await account.claims("id_token", input.scopes.join(" "));
+    const picture = input.scopes.includes("profile")
+      ? { picture: `${config.issuer}/api/picture/${encodeURIComponent(input.userId)}` }
+      : {};
     const digest = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.accessToken)));
     const atHash = digest.subarray(0, digest.length / 2).toString("base64url");
-    return new SignJWT({ ...claims, nonce: input.nonce, auth_time: Math.floor(input.authenticatedAt.getTime() / 1000), at_hash: atHash })
+    return new SignJWT({ ...claims, ...picture, nonce: input.nonce, auth_time: Math.floor(input.authenticatedAt.getTime() / 1000), at_hash: atHash })
       .setProtectedHeader({ alg: "RS256", kid: activeJwk.kid, typ: "JWT" })
       .setIssuer(config.issuer)
       .setSubject(input.userId)

@@ -24,7 +24,7 @@ const keys = await createKeyService(config, identity);
 const sessions = createSessionService(db);
 const oauth = createOAuthService(config, db, keys, identity);
 const microsoft = createMicrosoftService(config, db, identity);
-const app = createApp(config, oauth, keys, sessions, microsoft);
+const app = createApp(config, oauth, keys, sessions, identity, microsoft);
 
 const server = serve({ fetch: app.fetch, port: config.port }, () => {
   console.log(`basis-auth listening on ${config.issuer}`);

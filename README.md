@@ -51,7 +51,7 @@ Start the service:
 npm run dev
 ```
 
-Development starts both Hono on `http://localhost:3000` and Vite on `http://localhost:5173`. Open the authorization interaction page on port 5173 while editing `web/src/*`; Vite hot-reloads it and proxies the interaction APIs to Hono. `OIDC_UI_ORIGIN=http://localhost:5173` in `.env` makes authorization redirects use that development UI. Use `npm run dev:auth` when you only need the backend.
+Development serves the React build and OAuth endpoints from Hono at `http://localhost:3000`. `npm run dev` starts Hono plus a Vite build watcher; edits under `web/src/*` rebuild automatically, then reload the browser to see the change. Use `npm run dev:auth` when you only need the backend.
 
 The server applies checked-in Drizzle migrations and idempotently upserts configured clients and resource servers during startup. Removed configuration entries are not automatically deleted.
 
@@ -77,6 +77,16 @@ A typical authorization request is:
 ```
 
 `offline_access` is required for a refresh token. Refresh tokens expire after 30 days and rotate on every use. Consent is remembered by client and expanded scope set; clients configured with `requireConsent: false` silently approve their registered grants.
+
+Each client can restrict Microsoft accounts with `filterMode` and `filterContent` in `OIDC_CLIENTS_JSON`. Set `filterMode` to `"whitelist"` to allow only the normalized Microsoft email/unique names in `filterContent`, or `"blacklist"` to reject those names. Leave the mode as `null` with an empty list to allow all accounts. Administrators can also set `users.disabled` to block an account across every client; blocked sign-ins return to the authorization page with an error.
+
+To create a client directly in the database, pass its JSON definition without `clientId`; the command prints the generated UUID. Remove a client with that UUID. Removing a client cascades to its authorization data.
+Remove a client from `OIDC_CLIENTS_JSON` before deleting it, otherwise the startup seed will create it again.
+
+```bash
+npm run clients:add -- '{"name":"Example","clientSecret":"replace-with-a-long-secret","redirectUris":["https://example.test/callback"],"public":false,"resources":["urn:basis:api:example"]}'
+npm run clients:remove -- 3fa85f64-5717-4562-b3fc-2c963f66afa6
+```
 
 ## Downstream BFF integration
 
@@ -119,3 +129,22 @@ PostgreSQL adapter integration tests are opt-in because they require Docker:
 ```bash
 RUN_POSTGRES_TESTS=1 npm test
 ```
+
+# API Errors:
+
+These are NOT Http response codes.
+
+| Code | Namespace | Description |
+| --- | --- | -----|
+| 400 | internal_error | General error such as invalid inputs |
+| 14001 | invalid_client | Client is not registered and not found |
+| 14002 | invalid_client | Client is disabled |
+| 14003 | invalid_client | A public client attempts to send an application secret. `PKCE` is required for this mode. |
+| 14004 | invalid_client | Incorrect or unconfigured client secret |
+| 14100 | invalid
+| 14429 | unsupported_response_type | Unsupported response type |
+| 14401 | invalid_scope | Client requests one or more scopes that is not configured or permitted |
+| 14407 | unknown_resource | One or more selected resource of the client is not supported or not found. This usually shouldn't happen since client resource configuration and schemed and automated. |
+| 14501 | invalid_target | One or more resources is not registered for this application |
+| 2400 | invalid_request | Frontend authentication flow cookie not found or expired |
+| 50040 | server_error | Internal server error occured during login, such as connection error with microsoft login / authentication endpoint |

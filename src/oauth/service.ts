@@ -22,6 +22,8 @@ export interface OAuthClient {
   secretHash: string | null;
   resources: string[];
   requireConsent: boolean;
+  filterMode: "whitelist" | "blacklist" | null;
+  filterContent: string[];
   metadata: StoredClientMetadata;
 }
 
@@ -59,16 +61,17 @@ export function createOAuthService(
 
   async function authenticateClient(clientId: string, secret?: string) {
     const client = await clientById(clientId);
-    if (!client) throw new OAuthError("invalid_client", "Client authentication failed", 401);
+    if (!client) throw new OAuthError("invalid_client", `Client "${clientId}" is not registered or has been disabled.`, 401, 14001);
     if (client.metadata.public) {
-      if (secret) throw new OAuthError("invalid_client", "Public clients must not send a secret", 401);
+      if (secret) throw new OAuthError("invalid_client", "Public clients must not send a secret", 401, 14003);
     } else if (!secret || !(await secretMatches(secret, client.secretHash))) {
-      throw new OAuthError("invalid_client", "Client authentication failed", 401);
+      throw new OAuthError("invalid_client", "Client authentication failed", 401, 14004);
     }
     return client;
   }
 
   async function startAuthorization(input: {
+    initialUri: string;
     clientId?: string;
     redirectUri?: string;
     responseType?: string;
@@ -82,12 +85,15 @@ export function createOAuthService(
   }) {
     if (!input.clientId) throw new OAuthError("invalid_request", "client_id is required");
     const client = await clientById(input.clientId);
-    if (!client) throw new OAuthError("invalid_request", "Unknown client_id");
+    if (!client) throw new OAuthError("invalid_request", `Client "${input.clientId}" is not registered or has been disabled.`, 400, 14001);
     if (!input.redirectUri || !client.metadata.redirectUris.includes(input.redirectUri)) {
-      throw new OAuthError("invalid_request", "redirect_uri is not registered");
+      throw new OAuthError("invalid_request", `redirect_uri is not registered for client "${client.metadata.name}"`, 400, 14100);
+    }
+    if (input.responseType == "token") {
+      throw new OAuthError("unsupported_response_type", "response_type=token is deprecated for present OAuth2.1 client " + client.metadata.name + ". Adjust backward compatibilty in your developer portal.", 400, 14429);
     }
     if (input.responseType !== "code") {
-      throw new OAuthError("unsupported_response_type", "Only response_type=code is supported");
+      throw new OAuthError("unsupported_response_type", "Only response_type=code is supported", 400, 14429);
     }
     if (!input.state) throw new OAuthError("invalid_request", "state is required");
     if (!input.nonce) throw new OAuthError("invalid_request", "nonce is required");
@@ -99,30 +105,31 @@ export function createOAuthService(
       throw new OAuthError("invalid_scope", "The openid scope is required");
     }
     if (!covers(client.metadata.scopes, scopes)) {
-      throw new OAuthError("invalid_scope", "The client is not allowed to request one or more scopes");
+      throw new OAuthError("invalid_scope", "The client is not allowed to request one or more scopes", 400, 14401);
     }
     if (input.resources.length > 1) {
       throw new OAuthError("invalid_target", "Exactly one resource may be requested");
     }
     const resource = input.resources[0] ?? (client.resources.length === 1 ? client.resources[0] : undefined);
     if (!resource || !client.resources.includes(resource)) {
-      throw new OAuthError("invalid_target", "The resource is not registered for this client");
+      throw new OAuthError("invalid_target", "The resource is not registered for this client", 400, 14501);
     }
     const [resourceServer] = await db
       .select()
       .from(resourceServers)
       .where(eq(resourceServers.audience, resource))
       .limit(1);
-    if (!resourceServer) throw new OAuthError("invalid_target", "Unknown resource server");
+    if (!resourceServer) throw new OAuthError("invalid_target", "Unknown resource server", 14407);
     const customScopes = scopes.filter((scope) => !identityScopes.has(scope));
     if (!covers(resourceServer.scopes, customScopes)) {
-      throw new OAuthError("invalid_scope", "A requested scope is not supported by the resource");
+      throw new OAuthError("invalid_scope", "A requested scope is not supported by the resource", 400, 14401);
     }
 
     const id = crypto.randomUUID();
     const interactionToken = randomToken(32);
     await db.insert(authorizationRequests).values({
       id,
+      initialUri: input.initialUri,
       interactionHash: hashToken(interactionToken),
       clientId: client.clientId,
       redirectUri: input.redirectUri,
@@ -152,10 +159,39 @@ export function createOAuthService(
         ),
       )
       .limit(1);
-    if (!request) throw new OAuthError("invalid_request", "Interaction is invalid or expired");
+    if (!request) throw new OAuthError("invalid_request", "Interaction is invalid or expired", 404, 2400);
     const client = await clientById(request.clientId);
-    if (!client) throw new OAuthError("invalid_request", "Client no longer exists");
+    if (!client) throw new OAuthError("invalid_request", "Client no longer exists", 400, 14001);
     return { request, client };
+  }
+
+  async function getAuthorization(bridgeToken: string) {
+    const [request] = await db
+      .select()
+      .from(authorizationRequests)
+      .where(
+        and(
+          eq(authorizationRequests.interactionHash, hashToken(bridgeToken)),
+          eq(authorizationRequests.status, "pending"),
+          gt(authorizationRequests.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+    if (!request) throw new OAuthError("invalid_request", "Authorization request is invalid or expired", 400, 2400);
+    return request;
+  }
+
+  async function getClient(clientId: string) {
+    const client = await clientById(clientId);
+    if (!client) throw new OAuthError("invalid_request", `Client "${clientId}" is not registered or has been disabled.`, 400, 14001);
+    return {
+      id: client.clientId,
+      name: client.metadata.name,
+      redirectUris: client.metadata.redirectUris,
+      scopes: client.metadata.scopes,
+      resources: client.resources,
+      public: client.metadata.public,
+    };
   }
 
   async function requiresConsent(request: typeof authorizationRequests.$inferSelect, client: OAuthClient) {
@@ -178,6 +214,21 @@ export function createOAuthService(
     const rows = await db
       .update(authorizationRequests)
       .set({ userId, authenticatedAt })
+      .where(
+        and(
+          eq(authorizationRequests.id, requestId),
+          eq(authorizationRequests.status, "pending"),
+          gt(authorizationRequests.expiresAt, new Date()),
+        ),
+      )
+      .returning({ id: authorizationRequests.id });
+    if (!rows.length) throw new OAuthError("invalid_request", "Authorization request expired");
+  }
+
+  async function clearInteractionUser(requestId: string) {
+    const rows = await db
+      .update(authorizationRequests)
+      .set({ userId: null, authenticatedAt: null })
       .where(
         and(
           eq(authorizationRequests.id, requestId),
@@ -429,8 +480,11 @@ export function createOAuthService(
     authenticateClient,
     startAuthorization,
     interaction,
+    getAuthorization,
+    getClient,
     requiresConsent,
     attachUser,
+    clearInteractionUser,
     grantConsent,
     completeAuthorization,
     denialRedirect,

@@ -8,6 +8,41 @@
       "when": 1785675475785,
       "tag": "0000_lyrical_thor_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786600479984,
+      "tag": "0001_natural_captain_cross",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786650135747,
+      "tag": "0002_cold_betty_brant",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786690082176,
+      "tag": "0003_skinny_surge",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786703595694,
+      "tag": "0004_regular_moira_mactaggert",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786703653243,
+      "tag": "0005_plain_wrecking_crew",
+      "breakpoints": true
     }
   ]
 }

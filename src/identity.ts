@@ -4,12 +4,13 @@ import type { Database } from "./database/client.js";
 import { userPermissions, users } from "./database/schema.js";
 
 export interface UpstreamIdentity {
+  provider: string;
   issuer: string;
   subject: string;
   email: string;
   emailVerified: boolean;
   displayName?: string;
-  picture?: string;
+  picture?: { data: Buffer; contentType: string };
 }
 
 export function createIdentityService(
@@ -32,6 +33,7 @@ export function createIdentityService(
       .from(users)
       .where(
         and(
+          eq(users.provider, identity.provider),
           eq(users.upstreamIssuer, identity.issuer),
           eq(users.upstreamSubject, identity.subject),
         ),
@@ -43,20 +45,24 @@ export function createIdentityService(
       .insert(users)
       .values({
         id,
+        provider: identity.provider,
         upstreamIssuer: identity.issuer,
         upstreamSubject: identity.subject,
         email: normalizedEmail,
         emailVerified: identity.emailVerified,
         displayName: identity.displayName,
-        picture: identity.picture,
+        picture: identity.picture?.data,
+        pictureContentType: identity.picture?.contentType,
       })
       .onConflictDoUpdate({
-        target: [users.upstreamIssuer, users.upstreamSubject],
+        target: [users.provider, users.upstreamIssuer, users.upstreamSubject],
         set: {
+          provider: identity.provider,
           email: normalizedEmail,
           emailVerified: identity.emailVerified,
           displayName: identity.displayName,
-          picture: identity.picture,
+          picture: identity.picture?.data,
+          pictureContentType: identity.picture?.contentType,
           updatedAt: new Date(),
         },
       })
@@ -82,7 +88,13 @@ export function createIdentityService(
         return {
           sub: user.id,
           ...(scopes.has("profile")
-            ? { name: user.displayName, picture: user.picture }
+            ? {
+                name: user.displayName,
+                picture:
+                  user.picture && user.pictureContentType
+                    ? `data:${user.pictureContentType};base64,${user.picture.toString("base64")}`
+                    : undefined,
+              }
             : {}),
           ...(scopes.has("email")
             ? { email: user.email, email_verified: user.emailVerified }

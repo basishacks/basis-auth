@@ -5,6 +5,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { Hono, type Context } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import type { AppConfig } from "./config.js";
+import type { IdentityService } from "./identity.js";
 import type { KeyService } from "./oauth/keys.js";
 import { OAuthError } from "./oauth/errors.js";
 import type { OAuthService } from "./oauth/service.js";
@@ -13,6 +14,7 @@ import type { MicrosoftService } from "./microsoft.js";
 
 const SSO_COOKIE = "basis_sso";
 const INTERACTION_COOKIE = "basis_bridge_id";
+const ERROR_COOKIE = "basis_bridge_error";
 
 function formValue(body: Record<string, string | File | (string | File)[]>, key: string) {
   const value = body[key];
@@ -48,23 +50,6 @@ function clientCredentials(c: Context, body: Record<string, string | File | (str
   return { clientId: formValue(body, "client_id") ?? "", clientSecret: undefined };
 }
 
-function statusPage(title: string, message: string) {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${title} · Basis Auth</title>
-  </head>
-  <body>
-    <main>
-      <h1>${title}</h1>
-      <p>${message}</p>
-    </main>
-  </body>
-</html>`;
-}
-
 function acceptsHtml(c: Context) {
   return c.req.method === "GET" && c.req.header("accept")?.includes("text/html");
 }
@@ -74,6 +59,7 @@ export function createApp(
   oauth: OAuthService,
   keys: KeyService,
   sessions: SessionService,
+  identity: IdentityService,
   microsoft: MicrosoftService,
 ) {
   const app = new Hono();
@@ -91,10 +77,75 @@ export function createApp(
     const supplied = Buffer.from(value);
     return expected.length === supplied.length && timingSafeEqual(expected, supplied);
   };
-  const interactionPage = (uid: string) => `${config.uiOrigin}/oauth/interaction/${uid}`;
+  const errorPayload = (error: any) =>
+    error instanceof OAuthError
+      ? error.toJSON()
+      : {
+          status: 500,
+          error: "server_error",
+          code: 50040,
+          error_description: error.toString(),
+        };
+  const originalAuthorizationUri = async (c: Context) => {
+    try {
+      const request = await oauth.getAuthorization(getCookie(c, INTERACTION_COOKIE)!);
+      return request.initialUri.startsWith("/oauth/authorize")
+        ? request.initialUri
+        : "/oauth/authorize";
+    } catch {
+      return "/oauth/authorize";
+    }
+  };
+  const frontendFlowError = async (c: Context, error: any) => {
+    const redirectTo = await originalAuthorizationUri(c);
+    setCookie(c, ERROR_COOKIE, btoa(JSON.stringify(errorPayload(error))), {
+      ...cookieOptions,
+      httpOnly: false,
+      path: "/oauth",
+      maxAge: 10 * 60,
+    });
+    if (c.req.header("accept")?.includes("application/json")) {
+      return c.json({ redirectTo });
+    }
+    return c.redirect(redirectTo, 303);
+  };
+  // const interactionPage = (uid: string) => `${config.issuer}/oauth/interaction/${uid}`;
 
   app.use("*", secureHeaders());
   app.get("/health", (c) => c.json({ status: "ok" }));
+
+  async function currentSession(c: Context) {
+    const session = await sessions.find(getCookie(c, SSO_COOKIE));
+    if (!session) return undefined;
+    const user = await identity.findUser(session.userId);
+    return user ? { session, user } : undefined;
+  }
+
+  app.get("/api/me", async (c) => {
+    const current = await currentSession(c);
+    if (!current) return c.json({ error: "unauthorized" }, 401);
+    const { session, user } = current;
+    c.header("Cache-Control", "no-store");
+    return c.json({
+      id: user.id,
+      provider: user.provider,
+      name: user.displayName,
+      email: user.email,
+      emailVerified: user.emailVerified,
+      loginExpiresAt: session.expiresAt.toISOString(),
+      picture: user.picture && user.pictureContentType ? `/api/picture/${user.id}` : null,
+    });
+  });
+
+  app.get("/api/picture/:userId", async (c) => {
+    const user = await identity.findUser(c.req.param("userId"));
+    if (!user?.picture || !user.pictureContentType) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    c.header("Cache-Control", "public, max-age=300");
+    c.header("Content-Type", user.pictureContentType);
+    return c.body(new Uint8Array(user.picture));
+  });
 
   app.get("/.well-known/openid-configuration", (c) =>
     c.json({
@@ -146,47 +197,92 @@ export function createApp(
   });
 
   app.get("/oauth/authorize", async (c) => {
+    const initialUrl = new URL(c.req.url);
+    const initialUri = initialUrl.pathname + initialUrl.search;
+    const interactionToken = getCookie(c, INTERACTION_COOKIE);
+    const bridgeError = getCookie(c, ERROR_COOKIE);
+    if (interactionToken) {
+      try {
+        const request = await oauth.getAuthorization(interactionToken);
+        if (request.initialUri === initialUri) {
+          return c.html(await readFile("./web/dist/index.html", "utf8"));
+        }
+        deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
+        deleteCookie(c, ERROR_COOKIE, { path: "/oauth" });
+      } catch (error) {
+        if (!(error instanceof OAuthError)) throw error;
+        deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
+        if (bridgeError) return c.html(await readFile("./web/dist/index.html", "utf8"));
+        deleteCookie(c, ERROR_COOKIE, { path: "/oauth" });
+      }
+    } else if (bridgeError) {
+      return c.html(await readFile("./web/dist/index.html", "utf8"));
+    } else {
+      deleteCookie(c, ERROR_COOKIE, { path: "/oauth" });
+    }
+
     const sso = await sessions.find(getCookie(c, SSO_COOKIE));
-    const started = await oauth.startAuthorization({
-      clientId: c.req.query("client_id"),
-      redirectUri: c.req.query("redirect_uri"),
-      responseType: c.req.query("response_type"),
-      scope: c.req.query("scope"),
-      resources: c.req.queries("resource") ?? [],
-      state: c.req.query("state"),
-      nonce: c.req.query("nonce"),
-      codeChallenge: c.req.query("code_challenge"),
-      codeChallengeMethod: c.req.query("code_challenge_method"),
-      session: sso ? { userId: sso.userId, authenticatedAt: sso.authenticatedAt } : undefined,
-    });
+    let started;
+    try {
+      started = await oauth.startAuthorization({
+        initialUri,
+        clientId: c.req.query("client_id"),
+        redirectUri: c.req.query("redirect_uri"),
+        responseType: c.req.query("response_type"),
+        scope: c.req.query("scope"),
+        resources: c.req.queries("resource") ?? [],
+        state: c.req.query("state"),
+        nonce: c.req.query("nonce"),
+        codeChallenge: c.req.query("code_challenge"),
+        codeChallengeMethod: c.req.query("code_challenge_method"),
+        session: sso ? { userId: sso.userId, authenticatedAt: sso.authenticatedAt } : undefined,
+      });
+    } catch (error) {
+      setCookie(c, ERROR_COOKIE, btoa(JSON.stringify(errorPayload(error))), {
+        ...cookieOptions,
+        httpOnly: false,
+        path: "/oauth",
+        maxAge: 10 * 60,
+      });
+      return c.html(await readFile("./web/dist/index.html", "utf8"));
+    }
+
     setCookie(c, INTERACTION_COOKIE, started.interactionToken, {
       ...cookieOptions,
       path: "/oauth",
       maxAge: 10 * 60,
     });
-    const { request, client } = await oauth.interaction(started.id, started.interactionToken);
-    if (request.userId && !(await oauth.requiresConsent(request, client))) {
-      deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
-      return c.redirect(await oauth.completeAuthorization(request.id), 303);
-    }
-    return c.redirect(interactionPage(started.id), 303);
+
+    console.log("start auth", started.interactionToken)
+
+    // const { request, client } = await oauth.interaction(started.id, started.interactionToken);
+    // if (request.userId && !(await oauth.requiresConsent(request, client))) {
+    //   deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
+    //   return c.html(await readFile("./web/dist/index.html", "utf8"))
+    // }
+    return c.html(await readFile("./web/dist/index.html", "utf8"))
   });
 
-  app.get("/oauth/interaction/:uid/details", async (c) => {
-    const uid = c.req.param("uid");
-    const { request, client } = await oauth.interaction(uid, getCookie(c, INTERACTION_COOKIE));
-    if (request.userId && !(await oauth.requiresConsent(request, client))) {
-      deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
-      return c.json({ redirectTo: await oauth.completeAuthorization(request.id) });
-    }
+  // app.get("/oauth/interaction", async (c) => {
+  //   const interaction = await oauth.getAuthorization(getCookie(c, INTERACTION_COOKIE)!);
+  //   console.log("interaction", interaction)
+
+  // })
+
+  // dep
+  app.get("/oauth/interaction", async (c) => {
+    const bridgeToken = getCookie(c, INTERACTION_COOKIE);
+    if (!bridgeToken) throw new OAuthError("invalid_request", "Interaction cookie is missing");
+    const request = await oauth.getAuthorization(bridgeToken);
+    const client = await oauth.getClient(request.clientId);
     return c.json({
-      uid,
+      uid: request.id,
       prompt: request.userId ? "consent" : "login",
-      client: { id: client.clientId, name: client.metadata.name },
+      client,
       scopes: request.scopes,
       resources: [request.resource],
       accountId: request.userId,
-      csrfToken: csrfToken(uid),
+      csrfToken: csrfToken(request.id),
       microsoftConfigured: Boolean(config.microsoft),
     });
   });
@@ -199,39 +295,66 @@ export function createApp(
     const { request } = await oauth.interaction(uid, getCookie(c, INTERACTION_COOKIE));
     const body = await c.req.json<{ action?: string }>();
     if (body.action === "deny") {
+      const redirectTo = await oauth.denyAuthorization(request);
       deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
-      return c.json({ redirectTo: await oauth.denyAuthorization(request) });
+      return c.json({ redirectTo });
     }
     if (body.action !== "allow") return c.json({ error: "invalid_action" }, 400);
     await oauth.grantConsent(request);
+    const redirectTo = await oauth.completeAuthorization(request.id);
     deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
-    return c.json({ redirectTo: await oauth.completeAuthorization(request.id) });
+    return c.json({ redirectTo });
   });
 
+
+  // dep
+
   app.get("/oauth/upstream/microsoft", async (c) => {
-    const uid = c.req.query("uid");
-    if (!uid) throw new OAuthError("invalid_request", "Interaction uid is required");
-    const { request } = await oauth.interaction(uid, getCookie(c, INTERACTION_COOKIE));
-    if (request.userId) throw new OAuthError("invalid_request", "User is already authenticated");
-    return c.redirect((await microsoft.begin(request.id)).href, 302);
+    try {
+      const uid = c.req.query("uid");
+      if (!uid) throw new OAuthError("invalid_request", "Interaction uid is required");
+      const { request } = await oauth.interaction(uid, getCookie(c, INTERACTION_COOKIE));
+      if (request.userId) throw new OAuthError("invalid_request", "User is already authenticated");
+      const redirectTo = (await microsoft.begin(request.id)).href;
+      if (c.req.header("accept")?.includes("application/json")) {
+        return c.json({ redirectTo });
+      }
+      return c.redirect(redirectTo, 302);
+    } catch (error: any) {
+      console.log(error)
+      return frontendFlowError(c, "Upstream Error: " + error.toString());
+    }
   });
 
   app.get("/oauth/callback/microsoft", async (c) => {
-    const incoming = new URL(c.req.url);
-    const callbackUrl = new URL(`${incoming.pathname}${incoming.search}`, config.issuer);
-    const result = await microsoft.callback(callbackUrl);
-    const sessionToken = await sessions.create(result.user.id);
-    setCookie(c, SSO_COOKIE, sessionToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
-    await oauth.attachUser(result.authorizationRequestId, result.user.id, new Date());
-    const { request, client } = await oauth.interaction(
-      result.authorizationRequestId,
-      getCookie(c, INTERACTION_COOKIE),
-    );
-    if (!(await oauth.requiresConsent(request, client))) {
-      deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
-      return c.redirect(await oauth.completeAuthorization(request.id), 303);
+    try {
+      const incoming = new URL(c.req.url);
+      const callbackUrl = new URL(`${incoming.pathname}${incoming.search}`, config.issuer);
+      const result = await microsoft.callback(callbackUrl);
+      const { request, client } = await oauth.interaction(
+        result.authorizationRequestId,
+        getCookie(c, INTERACTION_COOKIE),
+      );
+      const filteredEmail = result.user.email.trim().toLowerCase();
+      const filterContent = client?.filterContent ?? [];
+      const matchesFilter = filterContent.includes(filteredEmail);
+      if (
+        result.user.disabled ||
+        (client?.filterMode === "whitelist" && !matchesFilter) ||
+        (client?.filterMode === "blacklist" && matchesFilter)
+      ) {
+        throw new OAuthError("access_denied", "This account is not allowed to sign in to this application.", 403);
+      }
+      const sessionToken = await sessions.create(result.user.id);
+      setCookie(c, SSO_COOKIE, sessionToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
+      await oauth.attachUser(result.authorizationRequestId, result.user.id, new Date());
+      return c.redirect(request.initialUri, 303);
+    } catch (error: any) {
+      return frontendFlowError(
+        c,
+        error instanceof OAuthError ? error : "Upstream Error: " + error.toString(),
+      );
     }
-    return c.redirect(interactionPage(request.id), 303);
   });
 
   app.post("/oauth/token", async (c) => {
@@ -281,36 +404,40 @@ export function createApp(
   const logout = async (c: Context) => {
     await sessions.destroy(getCookie(c, SSO_COOKIE));
     deleteCookie(c, SSO_COOKIE, { path: "/" });
-    return c.redirect("/signed-out", 303);
+    const interactionToken = getCookie(c, INTERACTION_COOKIE);
+    let redirectTo = "/oauth/authorize";
+    if (interactionToken) {
+      const request = await oauth.getAuthorization(interactionToken);
+      await oauth.clearInteractionUser(request.id);
+      redirectTo = request.initialUri;
+    }
+    if (c.req.header("accept")?.includes("application/json")) return c.json({});
+    return c.redirect(redirectTo, 303);
   };
   app.get("/oauth/logout", logout);
   app.post("/oauth/logout", logout);
 
   if (config.environment !== "test") {
     app.use("/assets/*", serveStatic({ root: "./web/dist" }));
+    app.use("/fonts/*", serveStatic({ root: "./web/dist" }));
   }
   const serveIndex = async (c: Context) => c.html(await readFile("./web/dist/index.html", "utf8"));
-  app.get("/", serveIndex);
-  app.get("/oauth/interaction/:uid", serveIndex);
-  app.get("/signed-out", serveIndex);
+  // app.get("/", serveIndex);
+  // app.get("/oauth/interaction/:uid", serveIndex);
+  // app.get("/signed-out", serveIndex);
   app.notFound(async (c) => {
-    const path = new URL(c.req.url).pathname;
-    const isFrontendPath = !path.startsWith("/oauth/") && !path.startsWith("/.well-known/") && !path.startsWith("/assets/");
-    if (isFrontendPath && acceptsHtml(c)) {
-      return c.html(statusPage("Page not found", "The page you requested does not exist or has moved."), 404);
-    }
     return c.json({ error: "not_found", error_description: "The requested resource does not exist" }, 404);
   });
 
   app.onError((error, c) => {
     console.error("Request failed", error);
     if (error instanceof OAuthError) {
-      if (error.status === 401) c.header("WWW-Authenticate", `Basic realm="${config.issuer}"`);
+      if (error.status === 401) c.header("WWW-Authenticate", `Bearer`);
       return c.json(error.toJSON(), error.status as 400);
     }
-    if (acceptsHtml(c)) {
-      return c.html(statusPage("Something went wrong", "Basis Auth could not complete this request. Please try again."), 500);
-    }
+    // if (acceptsHtml(c)) {
+    //   return c.html(statusPage("Something went wrong", "Basis Auth could not complete this request. Please try again."), 500);
+    // }
     return c.json({ error: "server_error", error_description: "The request could not be completed" }, 500);
   });
   return app;

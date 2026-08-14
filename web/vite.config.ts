@@ -11,22 +11,14 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
-  server: {
-    port: 5173,
-    proxy: {
-      "/oauth": {
-        target: "http://localhost:3000",
-        bypass(request) {
-          return /^\/oauth\/interaction\/[^/?]+\/?(?:\?.*)?$/.test(request.url ?? "")
-            ? request.url
-            : undefined;
-        },
-      },
-      "/.well-known": "http://localhost:3000",
-    },
-  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
+  },
+  server: {
+    proxy: {
+      "/oauth": "http://localhost:3000",
+      "/.well-known": "http://localhost:3000",
+    },
   },
 });
