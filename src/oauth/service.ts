@@ -14,6 +14,7 @@ import type { IdentityService } from "../identity.js";
 import { hashToken, isValidS256PkceRequest, randomToken, verifyS256Pkce } from "./crypto.js";
 import { OAuthError } from "./errors.js";
 import type { KeyService } from "./keys.js";
+import { scopesCover } from "./scopes.js";
 
 const identityScopes = new Set(["openid", "profile", "email", "permissions", "offline_access"]);
 
@@ -37,11 +38,6 @@ function parseMetadata(value: Record<string, unknown>): StoredClientMetadata {
     throw new Error("Stored client metadata is invalid");
   }
   return value as StoredClientMetadata;
-}
-
-function covers(granted: string[], requested: string[]) {
-  const available = new Set(granted);
-  return requested.every((value) => available.has(value));
 }
 
 export function createOAuthService(
@@ -104,7 +100,7 @@ export function createOAuthService(
     if (!scopes.includes("openid")) {
       throw new OAuthError("invalid_scope", "The openid scope is required");
     }
-    if (!covers(client.metadata.scopes, scopes)) {
+    if (!scopesCover(client.metadata.scopes, scopes)) {
       throw new OAuthError("invalid_scope", "The client is not allowed to request one or more scopes", 400, 14401);
     }
     if (input.resources.length > 1) {
@@ -121,7 +117,7 @@ export function createOAuthService(
       .limit(1);
     if (!resourceServer) throw new OAuthError("invalid_target", "Unknown resource server", 14407);
     const customScopes = scopes.filter((scope) => !identityScopes.has(scope));
-    if (!covers(resourceServer.scopes, customScopes)) {
+    if (!scopesCover(resourceServer.scopes, customScopes)) {
       throw new OAuthError("invalid_scope", "A requested scope is not supported by the resource", 400, 14401);
     }
 
@@ -207,7 +203,7 @@ export function createOAuthService(
         ),
       )
       .limit(1);
-    return !consent || !covers(consent.scopes, request.scopes) || !consent.resources.includes(request.resource);
+    return !consent || !scopesCover(consent.scopes, request.scopes) || !consent.resources.includes(request.resource);
   }
 
   async function attachUser(requestId: string, userId: string, authenticatedAt: Date) {
@@ -333,6 +329,16 @@ export function createOAuthService(
     familyId?: string;
     refreshExpiresAt?: Date;
   }) {
+    const user = await identity.findUser(input.userId);
+    if (!user || user.disabled) {
+      if (input.familyId) {
+        await db
+          .update(refreshTokens)
+          .set({ revokedAt: new Date() })
+          .where(eq(refreshTokens.familyId, input.familyId));
+      }
+      throw new OAuthError("invalid_grant", "User is missing or disabled");
+    }
     const accessToken = await keys.issueAccessToken(input);
     const response: Record<string, unknown> = {
       access_token: accessToken,

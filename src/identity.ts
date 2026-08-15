@@ -79,7 +79,7 @@ export function createIdentityService(
 
   async function findAccount(userId: string) {
     const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-    if (!user) return undefined;
+    if (!user || user.disabled) return undefined;
     const permissions = await permissionsFor(user.id);
     return {
       accountId: user.id,

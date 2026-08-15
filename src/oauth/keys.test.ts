@@ -35,3 +35,48 @@ describe("ID token claims", () => {
     );
   });
 });
+
+describe("access-token user state", () => {
+  it("rejects disabled subjects and tokens at the revocation barrier", async () => {
+    const { privateKey } = await generateKeyPair("RS256", { extractable: true });
+    const jwk = await exportJWK(privateKey);
+    jwk.kid = "test";
+    const config = {
+      issuer: "https://auth.example.test",
+      jwks: { keys: [jwk] },
+    } as AppConfig;
+    const user = {
+      id: "d2c3f635-527c-4c0a-bc1c-15d6af3f0946",
+      disabled: false,
+      tokensValidAfter: null as Date | null,
+    };
+    const identity = {
+      findUser: async () => user,
+      permissionsFor: async () => ["participant"],
+    } as unknown as IdentityService;
+    const keys = await createKeyService(config, identity);
+
+    const token = await keys.issueAccessToken({
+      userId: user.id,
+      clientId: "client",
+      scopes: ["user.write.email"],
+      resource: "urn:basis:api:test",
+    });
+    await expect(keys.verifyAccessToken(token)).resolves.toMatchObject({ sub: user.id });
+
+    const issuedAt = decodeJwt(token).iat!;
+    user.tokensValidAfter = new Date(issuedAt * 1000);
+    await expect(keys.verifyAccessToken(token)).rejects.toThrow("revoked");
+
+    user.tokensValidAfter = null;
+    user.disabled = true;
+    await expect(
+      keys.issueAccessToken({
+        userId: user.id,
+        clientId: "client",
+        scopes: [],
+        resource: "urn:basis:api:test",
+      }),
+    ).rejects.toThrow("disabled");
+  });
+});

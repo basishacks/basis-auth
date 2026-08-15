@@ -4,15 +4,26 @@ import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 export interface BasisAccessToken extends JWTPayload {
   sub: string;
   client_id: string;
-  scope?: string;
-  permissions?: string[];
+  scope: string;
+  permissions: string[];
+  jti: string;
+  iat: number;
+}
+
+export interface TokenSubjectState {
+  disabled: boolean;
+  tokensValidAfter: Date | null;
 }
 
 export type AuthVariables = {
   basisToken: BasisAccessToken;
 };
 
-export function basisAuth(options: { issuer: string; audience: string }): MiddlewareHandler<{
+export function basisAuth(options: {
+  issuer: string;
+  audience: string;
+  loadTokenSubject?: (subject: string) => Promise<TokenSubjectState | undefined>;
+}): MiddlewareHandler<{
   Variables: AuthVariables;
 }> {
   const issuer = options.issuer.replace(/\/$/, "");
@@ -32,8 +43,27 @@ export function basisAuth(options: { issuer: string; audience: string }): Middle
         audience: options.audience,
         typ: "at+jwt",
       });
-      if (!payload.sub || typeof payload.client_id !== "string") {
+      if (
+        !payload.sub ||
+        typeof payload.client_id !== "string" ||
+        typeof payload.scope !== "string" ||
+        !Array.isArray(payload.permissions) ||
+        !payload.permissions.every((permission) => typeof permission === "string") ||
+        typeof payload.jti !== "string" ||
+        typeof payload.iat !== "number"
+      ) {
         throw new Error("Required access-token claims are missing");
+      }
+      if (options.loadTokenSubject) {
+        const subject = await options.loadTokenSubject(payload.sub);
+        if (
+          !subject ||
+          subject.disabled ||
+          typeof payload.iat !== "number" ||
+          (subject.tokensValidAfter && payload.iat * 1000 <= subject.tokensValidAfter.getTime())
+        ) {
+          return c.json({ error: "invalid_token", error_description: "Access token has been revoked" }, 403);
+        }
       }
       c.set("basisToken", payload as BasisAccessToken);
       await next();

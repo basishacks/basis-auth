@@ -31,6 +31,9 @@ const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().min(1),
+  INTERNAL_API_HOST: z.string().min(1).default("127.0.0.1"),
+  INTERNAL_API_PORT: z.coerce.number().int().positive().default(3001),
+  INTERNAL_API_TOKEN: z.string().min(32),
   OIDC_ISSUER: z.url().transform((issuer) => issuer.replace(/\/$/, "")),
   OIDC_COOKIE_KEYS: z.string().min(32),
   OIDC_JWKS_JSON: z.string().optional(),
@@ -52,6 +55,9 @@ export interface AppConfig {
   environment: "development" | "test" | "production";
   port: number;
   databaseUrl: string;
+  internalApiHost: string;
+  internalApiPort: number;
+  internalApiToken: string;
   issuer: string;
   cookieKeys: string[];
   jwks: { keys: JWK[] };
@@ -161,6 +167,9 @@ export async function loadConfig(source: NodeJS.ProcessEnv = process.env): Promi
     environment: env.NODE_ENV,
     port: env.PORT,
     databaseUrl: env.DATABASE_URL,
+    internalApiHost: env.INTERNAL_API_HOST,
+    internalApiPort: env.INTERNAL_API_PORT,
+    internalApiToken: env.INTERNAL_API_TOKEN,
     issuer: env.OIDC_ISSUER,
     cookieKeys,
     jwks: await loadJwks(env),

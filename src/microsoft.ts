@@ -106,10 +106,7 @@ export function createMicrosoftService(
       issuer: claims.iss,
       subject: claims.sub,
       email: emailValue,
-      emailVerified:
-        userInfo.email_verified === true ||
-        claims.email_verified === true ||
-        Boolean(claims.preferred_username),
+      emailVerified: true,
       displayName:
         typeof userInfo.name === "string"
           ? userInfo.name

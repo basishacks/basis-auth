@@ -20,6 +20,8 @@ export interface AccessTokenClaims extends JWTPayload {
   client_id: string;
   scope: string;
   permissions: string[];
+  jti: string;
+  iat: number;
 }
 
 export async function createKeyService(config: AppConfig, identity: IdentityService) {
@@ -38,6 +40,8 @@ export async function createKeyService(config: AppConfig, identity: IdentityServ
     scopes: string[];
     resource: string;
   }) {
+    const user = await identity.findUser(input.userId);
+    if (!user || user.disabled) throw new Error("Cannot issue an access token for a missing or disabled user");
     const permissions = await identity.permissionsFor(input.userId);
     return new SignJWT({
       client_id: input.clientId,
@@ -91,11 +95,23 @@ export async function createKeyService(config: AppConfig, identity: IdentityServ
       !payload.sub ||
       typeof payload.client_id !== "string" ||
       typeof payload.scope !== "string" ||
-      !Array.isArray(payload.permissions)
+      !Array.isArray(payload.permissions) ||
+      !payload.permissions.every((permission) => typeof permission === "string") ||
+      typeof payload.jti !== "string" ||
+      typeof payload.iat !== "number"
     ) {
       throw new Error("Access token claims are invalid");
     }
-    return payload as AccessTokenClaims;
+    const claims = payload as AccessTokenClaims;
+    const user = await identity.findUser(claims.sub);
+    if (
+      !user ||
+      user.disabled ||
+      (user.tokensValidAfter && claims.iat * 1000 <= user.tokensValidAfter.getTime())
+    ) {
+      throw new Error("Access token has been revoked");
+    }
+    return claims;
   }
 
   return { publicJwks, issueAccessToken, issueIdToken, verifyAccessToken };

@@ -30,6 +30,7 @@ export const users = pgTable(
     displayName: text("display_name"),
     picture: bytea("picture"),
     pictureContentType: text("picture_content_type"),
+    tokensValidAfter: timestamp("tokens_valid_after", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

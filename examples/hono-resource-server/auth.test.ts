@@ -24,16 +24,21 @@ describe("resource-server middleware", () => {
       .setProtectedHeader({ alg: "RS256", kid: "test", typ: "at+jwt" })
       .setIssuer("https://auth.example.test")
       .setAudience("urn:basis:api:projects")
+      .setJti("test-token")
       .setIssuedAt()
       .setExpirationTime("10m")
       .sign(privateKey);
   }
 
-  function app() {
+  function app(loadTokenSubject?: () => Promise<{ disabled: boolean; tokensValidAfter: Date | null }>) {
     const instance = new Hono<{ Variables: AuthVariables }>();
     instance.use(
       "/protected",
-      basisAuth({ issuer: "https://auth.example.test", audience: "urn:basis:api:projects" }),
+      basisAuth({
+        issuer: "https://auth.example.test",
+        audience: "urn:basis:api:projects",
+        loadTokenSubject,
+      }),
     );
     instance.get(
       "/protected",
@@ -111,6 +116,20 @@ describe("resource-server middleware", () => {
       headers: { authorization: `Bearer ${await token({ permissions: [] })}` },
     });
     expect(missingPermission.status).toBe(403);
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects a disabled subject after signature validation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ keys: [publicJwk] }))),
+    );
+    const response = await app(async () => ({ disabled: true, tokensValidAfter: null })).request(
+      "/protected",
+      { headers: { authorization: `Bearer ${await token()}` } },
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: "invalid_token" });
     vi.unstubAllGlobals();
   });
 });

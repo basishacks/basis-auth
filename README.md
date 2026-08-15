@@ -112,7 +112,11 @@ ID tokens authenticate the client login. They must never be accepted by resource
 - validates exact issuer, audience, and token lifetime;
 - exposes `requireScopes()` and `requirePermissions()` helpers.
 
-Other platforms should implement the same contract with their standard OAuth resource-server library. No API should call `basis-auth` on every request. A user disablement or permission change reaches every API when existing access tokens expire, within ten minutes.
+Other platforms should implement the same contract with their standard OAuth resource-server library. APIs that only verify JWTs locally observe user disablement and permission changes when existing access tokens expire, within ten minutes.
+
+Resource APIs that require immediate per-user revocation must also load the token subject's `disabled` and `tokens_valid_after` state after signature validation. Reject disabled subjects and tokens whose `iat` is at or before that barrier. The example middleware exposes `loadTokenSubject` for this check while keeping JWT and revocation validation local to the resource API.
+
+`basis-api` uses the private `/internal/users/:userId` endpoints for this state, profile pictures, and user PATCH operations. They run on a separate listener configured by `INTERNAL_API_HOST` and `INTERNAL_API_PORT`, bound to `127.0.0.1:3001` by default. Requests also require `Authorization: Bearer <INTERNAL_API_TOKEN>`. Use the same random token in trusted local services and keep the listener off the public network.
 
 ## Development commands
 

@@ -4,6 +4,7 @@ import { loadConfig } from "./config.js";
 const base = {
   NODE_ENV: "test",
   DATABASE_URL: "postgresql://test:test@localhost/test",
+  INTERNAL_API_TOKEN: "a".repeat(32),
   OIDC_ISSUER: "https://auth.example.test/",
   OIDC_COOKIE_KEYS: "a".repeat(32),
   OIDC_RESOURCES_JSON: JSON.stringify([

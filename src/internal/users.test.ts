@@ -1,0 +1,27 @@
+import { describe, expect, it } from "vitest";
+import { InternalUserError, internalUserInternals } from "./users.js";
+
+describe("internal user PATCH validation", () => {
+  it("normalizes email and accepts grouped pictures", () => {
+    const picture = Buffer.from("picture").toString("base64");
+    expect(
+      internalUserInternals.parsePatch({
+        email: "Person@Example.TEST",
+        picture: { data: picture, contentType: "image/png" },
+      }),
+    ).toEqual({
+      email: "person@example.test",
+      picture: { data: picture, contentType: "image/png" },
+    });
+  });
+
+  it("rejects empty, immutable, and malformed fields", () => {
+    for (const input of [{}, { createdAt: "2020-01-01" }, { email: "not-an-email" }, { picture: {} }]) {
+      expect(() => internalUserInternals.parsePatch(input)).toThrow(InternalUserError);
+    }
+  });
+
+  it("rejects malformed user IDs before querying PostgreSQL", () => {
+    expect(() => internalUserInternals.validateUserId("not-a-uuid")).toThrow(InternalUserError);
+  });
+});
