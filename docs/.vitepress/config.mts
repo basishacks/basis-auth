@@ -9,8 +9,17 @@ export default defineConfig({
     build: {
       target: "es2022",
     },
+    optimizeDeps: {
+      esbuildOptions: {
+        target: "es2022",
+      },
+    },
   },
   themeConfig: {
+    nav: [
+      { text: "Home", link: "/" },
+      { text: "FAQ", link: "/FAQ" },
+    ],
     socialLinks: [
       { icon: "github", link: "https://github.com/basishacks/basis-auth" },
     ],
