@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "basis-auth",
   description: "The authentication and identity boundary for Basis applications.",
-  base: "/basis-auth/",
+  base: "/devconnect/",
   cleanUrls: true,
   vite: {
     build: {
