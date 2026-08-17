@@ -108,7 +108,7 @@ export function createOAuthService(
     }
     const resource = input.resources[0] ?? (client.resources.length === 1 ? client.resources[0] : undefined);
     if (!resource || !client.resources.includes(resource)) {
-      throw new OAuthError("invalid_target", "The resource is not registered for this client", 400, 14501);
+      throw new OAuthError("invalid_target", "The resource \"" + resource +"\" is not registered for this client", 400, 14501);
     }
     const [resourceServer] = await db
       .select()
