@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "basis-auth",
   description: "The authentication and identity boundary for Basis applications.",
-  base: "/devconnect/",
+  base: "/",
   cleanUrls: true,
   vite: {
     build: {
@@ -18,7 +18,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Home", link: "/" },
-      { text: "FAQ", link: "/FAQ" },
+      { text: "FAQ", link: "/devconnect/FAQ" },
     ],
     socialLinks: [
       { icon: "github", link: "https://github.com/basishacks/basis-auth" },

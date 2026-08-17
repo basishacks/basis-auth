@@ -8,15 +8,15 @@ DevConnect is a shared sign-in service for BASIS applications. It lets student p
 
 An application sends you to DevConnect, which redirects you to Microsoft to verify your school account.
 
-![Sign In Screen](./images/1.png)
+![Sign In Screen](../images/1.png)
 
 Next, you complete your regular microsoft login:
 
-![MS Login](./images/3.png)
+![MS Login](../images/3.png)
 
 When you return, review the requested access. Select `Allow` to continue to the application or `Deny` to cancel.
 
-![Consent Screen](./images/2.png)
+![Consent Screen](../images/2.png)
 
 Afterwards, you will be redirected back to your application.
 
@@ -67,5 +67,4 @@ He is Barry
 
 ## Which district is BIPO???
 Basis International Pacific Ocean
-
 
