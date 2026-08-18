@@ -50,6 +50,44 @@ describe("protocol metadata", () => {
   });
 });
 
+describe("OAuth errors", () => {
+  it("returns the specific token error without an ambiguous bearer challenge", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const oauth = {
+      exchangeAuthorizationCode: vi
+        .fn()
+        .mockRejectedValue(new OAuthError("invalid_client", "Client authentication failed", 401, 14004)),
+    } as unknown as OAuthService;
+    const tokenApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+
+    const response = await tokenApp.request("/oauth/token", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from("client-id:client-secret").toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: "grant_type=authorization_code&code=authorization-code",
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBeNull();
+    expect(await response.json()).toEqual({
+      status: 401,
+      error: "invalid_client",
+      code: 14004,
+      error_description: "Client authentication failed",
+    });
+    log.mockRestore();
+  });
+});
+
 describe("unexpected backend failures", () => {
   const brokenKeys = {} as KeyService;
   Object.defineProperty(brokenKeys, "publicJwks", {

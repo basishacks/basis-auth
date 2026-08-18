@@ -432,7 +432,6 @@ export function createApp(
   app.onError((error, c) => {
     console.error("Request failed", error);
     if (error instanceof OAuthError) {
-      if (error.status === 401) c.header("WWW-Authenticate", `Bearer`);
       return c.json(error.toJSON(), error.status as 400);
     }
     // if (acceptsHtml(c)) {
