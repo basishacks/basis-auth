@@ -312,7 +312,7 @@ export function createApp(
   app.get("/oauth/upstream/microsoft", async (c) => {
     try {
       const uid = c.req.query("uid");
-      if (!uid) throw new OAuthError("invalid_request", "Interaction uid is required");
+      if (!uid) throw new OAuthError("invalid_request", "Interaction is not found or expired");
       const { request } = await oauth.interaction(uid, getCookie(c, INTERACTION_COOKIE));
       if (request.userId) throw new OAuthError("invalid_request", "User is already authenticated");
       const redirectTo = (await microsoft.begin(request.id)).href;
