@@ -1,14 +1,10 @@
 import { getCookie } from "hono/cookie";
 import type { Context, MiddlewareHandler } from "hono";
 import type { AdminAuthService } from "./auth.js";
-import { csrfValid, isLocked, type AdminContext } from "./context.js";
+import { csrfValid, isLocked, type AdminContext, type AppEnv } from "./context.js";
 import type { PortalPermission } from "./permissions.js";
 
-export interface AppEnv {
-  Variables: {
-    admin: AdminContext;
-  };
-}
+export type { AppEnv };
 
 /**
  * Optional perimeter filter. An empty allowlist disables the check entirely.
