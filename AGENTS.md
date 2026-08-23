@@ -31,3 +31,34 @@ Use concise, imperative Conventional Commit-style subjects, e.g. `feat: add clie
 ## Security & Configuration
 
 Never commit `.env`, credentials, private JWKs, tokens, or database dumps. Start from `.env.example`. Keep `OIDC_ISSUER`, the running port, and Microsoft redirect URI aligned. Treat OAuth redirect, session, consent, and token changes as security-sensitive and verify their failure paths.
+
+## Management portal (dmin/)
+
+- dmin/api/ holds the Hono API: pp.ts assembles routes, middleware.ts
+  provides the session/permission/step-up/CSRF guard chain, and
+  outes/*.ts registers one module per domain. dmin/web/ is the SPA.
+- Permissions come from the fixed catalog in dmin/api/permissions.ts;
+  never trust client-supplied permission strings. Every mutating route must be
+  wrapped with CSRF, permission, step-up, and audit (writeAudit) layers.
+- The portal connects through the least-privilege role created by
+  scripts/create-admin-role.sql; keep udit_events/uth_events grants to
+  SELECT + INSERT only.
+
+## Security conventions
+
+- Never log tokens, secrets, or CSRF material; use [redacted].
+- All token comparisons are timing-safe; all SQL goes through Drizzle or
+  parameterized sql templates.
+- Rate limiters live in src/security/rateLimit.ts; reuse them for new
+  public endpoints instead of ad-hoc counters.
+- New schema changes require a fresh Drizzle migration (
+pm run db:generate)
+  and, when touching users, a db:check-dupes pre-flight.
+
+## Commands
+
+- 
+pm run dev:admin runs the portal; 
+pm run build:web:admin builds its SPA.
+- 
+pm run db:check-dupes reports duplicate emails before migrations.
