@@ -37,7 +37,7 @@ export function App() {
 
       const raw = document.cookie
         .split("; ")
-        .find((c) => c.startsWith("basis_bridge_error="))
+        .find((c) => c.startsWith("basis_bridge_error=") || c.startsWith("__Host-basis_bridge_error="))
         ?.split("=")[1];
 
       if (raw) {
@@ -46,8 +46,9 @@ export function App() {
         await delay(300);
         animate( "content", error)
         console.log(error)
-        // clear it so it doesn't linger
+        // Clear it so it doesn't linger.
         document.cookie = "basis_bridge_error=; path=/oauth; max-age=0";
+        document.cookie = "__Host-basis_bridge_error=; path=/oauth; max-age=0";
 
         return;
       }
