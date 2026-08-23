@@ -40,9 +40,9 @@ export async function createKeyService(config: AppConfig, identity: IdentityServ
     scopes: string[];
     resource: string;
   }) {
-    const user = await identity.findUser(input.userId);
+    const user = await identity.findUserCore(input.userId);
     if (!user || user.disabled) throw new Error("Cannot issue an access token for a missing or disabled user");
-    const permissions = await identity.permissionsFor(input.userId);
+    const { permissions } = user;
     return new SignJWT({
       client_id: input.clientId,
       scope: input.scopes.join(" "),
@@ -103,7 +103,7 @@ export async function createKeyService(config: AppConfig, identity: IdentityServ
       throw new Error("Access token claims are invalid");
     }
     const claims = payload as AccessTokenClaims;
-    const user = await identity.findUser(claims.sub);
+    const user = await identity.findUserCore(claims.sub);
     if (
       !user ||
       user.disabled ||
