@@ -434,7 +434,7 @@ export function createApp(
       }
       // Same enforcement as the SSO-session path; defense in depth for
       // freshly authenticated users.
-      if (client) assertClientEmailAccess(client, result.user.email);
+      if (client?.filterMode) assertClientEmailAccess(client, result.user.email);
       const sessionToken = await sessions.create(result.user.id);
       setCookie(c, SSO_COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
       await oauth.attachUser(result.authorizationRequestId, result.user.id, new Date());
@@ -565,7 +565,18 @@ export function createApp(
     if (c.req.method === "GET" && c.req.header("accept")?.includes("text/html")) {
       return c.html(statusPage("Something went wrong", "Basis Auth could not complete this request. Please try again."), 500);
     }
-    return c.json(errorPayload(error), 500);
+    return c.json(
+      {
+        error: "server_error",
+        error_description:
+          config.environment === "development"
+            ? error instanceof Error
+              ? error.message
+              : String(error)
+            : "The request could not be completed",
+      },
+      500,
+    );
   });
   return app;
 }
