@@ -7,7 +7,7 @@ import { oidcClients, resourceServers } from "./schema.js";
 
 const scrypt = promisify(scryptCallback);
 
-async function hashSecret(secret: string): Promise<string> {
+export async function hashSecret(secret: string): Promise<string> {
   const salt = randomBytes(16);
   const digest = (await scrypt(secret, salt, 64)) as Buffer;
   return `scrypt:${salt.toString("base64url")}:${digest.toString("base64url")}`;
