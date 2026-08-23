@@ -132,8 +132,8 @@ describe("SSO account API", () => {
     displayName: "Example User",
     email: "user@example.test",
     emailVerified: true,
-    picture: Buffer.from([137, 80, 78, 71]),
-    pictureContentType: "image/png",
+    disabled: false,
+    hasPicture: true,
   };
   const loginExpiresAt = new Date("2030-01-01T00:00:00.000Z");
   const accountApp = createApp(
@@ -141,7 +141,12 @@ describe("SSO account API", () => {
     {} as OAuthService,
     { publicJwks: { keys: [] } } as unknown as KeyService,
     { find: vi.fn().mockResolvedValue({ userId: user.id, expiresAt: loginExpiresAt }) } as unknown as SessionService,
-    { findUser: vi.fn().mockResolvedValue(user) } as unknown as IdentityService,
+    {
+      findUser: vi.fn().mockResolvedValue(user),
+      fetchProfilePicture: vi
+        .fn()
+        .mockResolvedValue({ data: Buffer.from([137, 80, 78, 71]), contentType: "image/png" }),
+    } as unknown as IdentityService,
     {} as MicrosoftService,
   );
 
@@ -161,11 +166,43 @@ describe("SSO account API", () => {
     });
   });
 
-  it("streams a public stored profile picture", async () => {
+  it("streams a public stored profile picture with sandboxed headers", async () => {
     const response = await accountApp.request(`/api/picture/${user.id}`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/png");
-    expect(Buffer.from(await response.arrayBuffer())).toEqual(user.picture);
+    expect(response.headers.get("content-security-policy")).toContain("sandbox");
+    expect(response.headers.get("content-disposition")).toContain("attachment");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from([137, 80, 78, 71]));
+  });
+
+  it("hides the profile picture reference when none is stored", async () => {
+    const bareApp = createApp(
+      config,
+      {} as OAuthService,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      { find: vi.fn().mockResolvedValue({ userId: user.id, expiresAt: loginExpiresAt }) } as unknown as SessionService,
+      { findUser: vi.fn().mockResolvedValue({ ...user, hasPicture: false }) } as unknown as IdentityService,
+      {} as MicrosoftService,
+    );
+    const response = await bareApp.request("/api/me", {
+      headers: { Cookie: "basis_sso=session-token" },
+    });
+    expect((await response.json()).picture).toBeNull();
+  });
+
+  it("rejects SSO sessions belonging to disabled accounts", async () => {
+    const disabledApp = createApp(
+      config,
+      {} as OAuthService,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      { find: vi.fn().mockResolvedValue({ userId: user.id, expiresAt: loginExpiresAt }) } as unknown as SessionService,
+      { findUser: vi.fn().mockResolvedValue({ ...user, disabled: true }) } as unknown as IdentityService,
+      {} as MicrosoftService,
+    );
+    const response = await disabledApp.request("/api/me", {
+      headers: { Cookie: "basis_sso=session-token" },
+    });
+    expect(response.status).toBe(401);
   });
 });
 
