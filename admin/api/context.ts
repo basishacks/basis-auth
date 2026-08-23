@@ -28,6 +28,12 @@ export interface Env {
   };
 }
 
+/** Shared hono environment for every portal route module. */
+export interface AppEnv {
+  Bindings: Record<string, string>;
+  Variables: Env["Variables"] & { ip?: string };
+}
+
 const LOCKOUT_KEY = "admin_locked";
 
 /** Reads the persisted global lockout switch. */
