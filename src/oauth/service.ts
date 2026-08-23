@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import type { Database } from "../database/client.js";
 import { secretMatches, type StoredClientMetadata } from "../database/seed.js";
@@ -6,6 +6,7 @@ import {
   authorizationCodes,
   authorizationConsents,
   authorizationRequests,
+  clientSecrets,
   oidcClients,
   refreshTokens,
   resourceServers,
@@ -106,9 +107,34 @@ export function createOAuthService(
     if (!client) throw new OAuthError("invalid_client", `Client "${clientId}" is not registered or has been disabled.`, 401, 14001);
     if (client.metadata.public) {
       if (secret) throw new OAuthError("invalid_client", "Public clients must not send a secret", 401, 14003);
-    } else if (!secret || !(await secretMatches(secret, client.secretHash))) {
-      throw new OAuthError("invalid_client", "Client authentication failed", 401, 14004);
+      return client;
     }
+    if (!secret) throw new OAuthError("invalid_client", "Client authentication failed", 401, 14004);
+    // Legacy single-secret column first, then the rotation table. Any match
+    // authenticates; portal-managed secrets also record last-used time.
+    if (await secretMatches(secret, client.secretHash)) return client;
+    const candidates = await db
+      .select({ id: clientSecrets.id, secretHash: clientSecrets.secretHash })
+      .from(clientSecrets)
+      .where(
+        and(
+          eq(clientSecrets.clientId, clientId),
+          isNull(clientSecrets.revokedAt),
+          or(isNull(clientSecrets.expiresAt), gt(clientSecrets.expiresAt, new Date())),
+        ),
+      );
+    let matchedId: string | undefined;
+    for (const candidate of candidates) {
+      if (await secretMatches(secret, candidate.secretHash)) {
+        matchedId = candidate.id;
+        break;
+      }
+    }
+    if (!matchedId) throw new OAuthError("invalid_client", "Client authentication failed", 401, 14004);
+    await db
+      .update(clientSecrets)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(clientSecrets.id, matchedId));
     return client;
   }
 
