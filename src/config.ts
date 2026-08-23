@@ -45,6 +45,19 @@ const environmentSchema = z.object({
   MICROSOFT_ISSUER: z.url().optional(),
   MICROSOFT_CLIENT_ID: z.string().min(1).optional(),
   MICROSOFT_CLIENT_SECRET: z.string().min(1).optional(),
+  // Security and hygiene knobs. Only set TRUST_PROXY when every request
+  // passes through a reverse proxy that overwrites X-Forwarded-For.
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .transform((value) => value === "true"),
+  PURGE_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
+  RATE_LIMIT_TOKEN_PER_MINUTE: z.coerce.number().int().positive().default(30),
+  RATE_LIMIT_AUTHORIZE_PER_MINUTE: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_INTERACTION_PER_MINUTE: z.coerce.number().int().positive().default(120),
+  RATE_LIMIT_CALLBACK_MAX_FAILURES: z.coerce.number().int().positive().default(10),
+  BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1024 * 1024),
+  UPLOAD_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(6 * 1024 * 1024),
 });
 
 export type ClientSeed = z.infer<typeof clientSchema>;
@@ -65,6 +78,16 @@ export interface AppConfig {
   resources: ResourceSeed[];
   defaultPermission: string;
   bootstrapPermissionGrants: BootstrapPermissionGrant[];
+  trustProxy: boolean;
+  purgeIntervalMs: number;
+  rateLimits: {
+    tokenPerMinute: number;
+    authorizePerMinute: number;
+    interactionPerMinute: number;
+    callbackMaxFailures: number;
+  };
+  bodyLimitBytes: number;
+  uploadBodyLimitBytes: number;
   microsoft?: {
     issuer: string;
     clientId: string;
@@ -181,6 +204,16 @@ export async function loadConfig(source: NodeJS.ProcessEnv = process.env): Promi
       env.BOOTSTRAP_PERMISSION_GRANTS_JSON,
       z.array(bootstrapGrantSchema),
     ),
+    trustProxy: env.TRUST_PROXY,
+    purgeIntervalMs: env.PURGE_INTERVAL_MS,
+    rateLimits: {
+      tokenPerMinute: env.RATE_LIMIT_TOKEN_PER_MINUTE,
+      authorizePerMinute: env.RATE_LIMIT_AUTHORIZE_PER_MINUTE,
+      interactionPerMinute: env.RATE_LIMIT_INTERACTION_PER_MINUTE,
+      callbackMaxFailures: env.RATE_LIMIT_CALLBACK_MAX_FAILURES,
+    },
+    bodyLimitBytes: env.BODY_LIMIT_BYTES,
+    uploadBodyLimitBytes: env.UPLOAD_BODY_LIMIT_BYTES,
     microsoft: hasAllMicrosoftConfig
       ? {
           issuer: env.MICROSOFT_ISSUER!,
