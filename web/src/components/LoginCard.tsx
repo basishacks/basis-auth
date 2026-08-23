@@ -133,7 +133,8 @@ export function LoginCard({ stat, onLogout }: { stat: Status; onLogout: () => Pr
 
     useEffect(() => {
         if (stat === undefined) return;
-        console.log("status changed", stat);
+        // Debug output must never include CSRF tokens or interaction handles.
+        console.log("status changed", { page: stat.page, prompt: stat.login?.prompt, error: stat.error });
     }, [stat]);
 
     return (
