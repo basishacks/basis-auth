@@ -33,6 +33,8 @@ function auditContext(
   };
 }
 
+const auditMeta = auditContext;
+
 export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
   const { db } = deps;
 
