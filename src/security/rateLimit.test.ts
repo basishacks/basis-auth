@@ -67,9 +67,11 @@ describe("rate limit middleware", () => {
     await expect(
       middleware(
         {
-          req: { header: () => undefined },
-          header: (name: string, value: string) => headers.set(name, value),
-        },
+          req: { header: (name: string) => (name ? undefined : undefined) },
+          header: (name: string, value?: string) => {
+            if (name && value) headers.set(name, value);
+          },
+        } as never,
         async () => {
           nextCalled = true;
         },
