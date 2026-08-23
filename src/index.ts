@@ -12,6 +12,7 @@ import { createOAuthService } from "./oauth/service.js";
 import { createSessionService } from "./oauth/sessions.js";
 import { createInternalUserService } from "./internal/users.js";
 import { createInternalApp } from "./internal/app.js";
+import { createPurgeService } from "./database/purge.js";
 
 const config = await loadConfig();
 await migrateDatabase(config.databaseUrl);
@@ -38,8 +39,21 @@ const internalServer = serve(
   () => console.log(`basis-auth internal API listening on http://${config.internalApiHost}:${config.internalApiPort}`),
 );
 
+const purge = createPurgeService(db);
+let purgeTimer: NodeJS.Timeout | undefined;
+function schedulePurge() {
+  purgeTimer = setInterval(() => {
+    void purge.purgeExpired().catch((error) => {
+      console.error("Expiry purge failed", error);
+    });
+  }, config.purgeIntervalMs);
+  purgeTimer.unref();
+}
+schedulePurge();
+
 async function shutdown(signal: string) {
   console.log(`Received ${signal}; shutting down`);
+  clearInterval(purgeTimer);
   await Promise.all([
     new Promise<void>((resolve) => server.close(() => resolve())),
     new Promise<void>((resolve) => internalServer.close(() => resolve())),
