@@ -2,7 +2,8 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { Database } from "../../../src/database/client.js";
-import { authSessions, refreshTokens, userPermissions, users } from "../../../src/database/schema.js";
+import { authSessions, localCredentials, refreshTokens, userPermissions, users } from "../../../src/database/schema.js";
+import { hashPassword, generateTempPassword } from "../passwords.js";
 import {
   HttpGuardError,
   keysetCursor,
@@ -208,6 +209,86 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
       ...auditContext(c),
     });
     return c.json({ ok: true });
+  });
+
+  app.post("/api/users/local", async (c) => {
+    const admin = c.get("admin");
+    const body = z
+      .object({
+        email: z.string().email(),
+        displayName: z.string().min(1).max(200),
+        permissions: z.array(z.string()).default([]),
+      })
+      .safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) throw new HttpGuardError(400, "invalid_request", "Email and displayName are required");
+    const email = body.data.email.trim().toLowerCase();
+    // Plaintext is returned exactly once; the account holder must reset it.
+    const tempPassword = generateTempPassword();
+    const userId = crypto.randomUUID();
+    await db.transaction(async (tx) => {
+      await tx.insert(users).values({
+        id: userId,
+        provider: "local",
+        upstreamIssuer: "local",
+        upstreamSubject: userId,
+        email,
+        emailVerified: false,
+        displayName: body.data.displayName,
+      });
+      await tx.insert(localCredentials).values({
+        userId,
+        passwordHash: await hashPassword(tempPassword),
+        passwordUpdatedAt: new Date(),
+        mustResetPassword: true,
+      });
+      if (body.data.permissions.length > 0) {
+        await tx
+          .insert(userPermissions)
+          .values(body.data.permissions.map((permission) => ({ userId, permission })))
+          .onConflictDoNothing();
+      }
+    });
+    await writeAudit(db, {
+      actorUserId: admin.userId,
+      action: "portal.user.local_created",
+      targetType: "user",
+      targetId: userId,
+      afterState: { email, permissions: body.data.permissions },
+      ...auditMeta(c),
+    });
+    return c.json({ userId, tempPassword });
+  });
+
+  app.post("/api/users/:userId/credentials/reset", async (c) => {
+    const admin = c.get("admin");
+    const userId = c.req.param("userId");
+    await assertTargetVisible(deps, admin, userId);
+    const tempPassword = generateTempPassword();
+    const updated = await db
+      .update(localCredentials)
+      .set({
+        passwordHash: await hashPassword(tempPassword),
+        passwordUpdatedAt: new Date(),
+        mustResetPassword: true,
+        failedAttempts: 0,
+        lockedUntil: null,
+        totpConfirmedAt: null,
+        totpSecretEnc: null,
+        recoveryCodes: [],
+      })
+      .where(eq(localCredentials.userId, userId))
+      .returning({ userId: localCredentials.userId });
+    if (!updated.length) throw new HttpGuardError(404, "not_found", "This account has no local credentials");
+    // A credential reset also kills every existing SSO session.
+    await db.delete(authSessions).where(eq(authSessions.userId, userId));
+    await writeAudit(db, {
+      actorUserId: admin.userId,
+      action: "portal.user.credentials_reset",
+      targetType: "user",
+      targetId: userId,
+      ...auditMeta(c),
+    });
+    return c.json({ tempPassword });
   });
 
   app.post("/api/users/:userId/force-signout", async (c) => {
