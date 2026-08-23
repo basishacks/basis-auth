@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import type { Database } from "../database/client.js";
 import { secretMatches, type StoredClientMetadata } from "../database/seed.js";
@@ -40,6 +40,39 @@ function parseMetadata(value: Record<string, unknown>): StoredClientMetadata {
   return value as StoredClientMetadata;
 }
 
+/**
+ * Enforces a client's email whitelist/blacklist. Shared by every path that
+ * can mint an authorization code so SSO-session reuse cannot bypass filters.
+ */
+export function assertClientEmailAccess(
+  client: Pick<OAuthClient, "filterMode" | "filterContent">,
+  email: string,
+) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const matches = client.filterContent.includes(normalizedEmail);
+  if (
+    (client.filterMode === "whitelist" && !matches) ||
+    (client.filterMode === "blacklist" && matches)
+  ) {
+    throw new OAuthError(
+      "access_denied",
+      "This account is not allowed to sign in to this application.",
+      403,
+    );
+  }
+}
+
+interface CachedClient {
+  client: OAuthClient;
+  expiresAt: number;
+}
+
+// Authorization flows read client configuration several times per request.
+// Client rows change rarely, so parsed rows are memoized briefly; staleness
+// is bounded by the TTL and callers mutating clients must invalidate.
+const CLIENT_CACHE_TTL_MS = 30_000;
+const clientCache = new Map<string, CachedClient>();
+
 export function createOAuthService(
   config: AppConfig,
   db: Database,
@@ -47,12 +80,25 @@ export function createOAuthService(
   identity: IdentityService,
 ) {
   async function clientById(clientId: string): Promise<OAuthClient | undefined> {
+    const cached = clientCache.get(clientId);
+    if (cached && cached.expiresAt > Date.now()) return cached.client;
     const [row] = await db
       .select()
       .from(oidcClients)
       .where(eq(oidcClients.clientId, clientId))
       .limit(1);
-    return row ? { ...row, metadata: parseMetadata(row.metadata) } : undefined;
+    if (!row) {
+      clientCache.delete(clientId);
+      return undefined;
+    }
+    const client: OAuthClient = { ...row, metadata: parseMetadata(row.metadata) };
+    clientCache.set(clientId, { client, expiresAt: Date.now() + CLIENT_CACHE_TTL_MS });
+    return client;
+  }
+
+  /** Drops a memoized client row; call after any direct write to `oidc_clients`. */
+  function invalidateClient(clientId: string) {
+    clientCache.delete(clientId);
   }
 
   async function authenticateClient(clientId: string, secret?: string) {
@@ -119,6 +165,21 @@ export function createOAuthService(
     const customScopes = scopes.filter((scope) => !identityScopes.has(scope));
     if (!scopesCover(resourceServer.scopes, customScopes)) {
       throw new OAuthError("invalid_scope", "A requested scope is not supported by the resource", 400, 14401);
+    }
+
+    // SSO-session reuse must satisfy the same account checks as a fresh
+    // upstream login: disabled accounts are rejected and client email
+    // filters are enforced here rather than only in the upstream callback.
+    if (input.session?.userId) {
+      const core = await identity.findUserCore(input.session.userId);
+      if (!core || core.disabled) {
+        throw new OAuthError(
+          "access_denied",
+          "This account is not allowed to sign in to this application.",
+          403,
+        );
+      }
+      assertClientEmailAccess(client, core.email);
     }
 
     const id = crypto.randomUUID();
@@ -387,7 +448,9 @@ export function createOAuthService(
       !authorizationCode ||
       authorizationCode.clientId !== input.clientId ||
       !input.codeVerifier ||
-      (input.redirectUri !== undefined && authorizationCode.redirectUri !== input.redirectUri) ||
+      // RFC 6749 section 4.1.3: redirect_uri, when it was part of the
+      // authorization request, is REQUIRED here and must match exactly.
+      input.redirectUri !== authorizationCode.redirectUri ||
       !verifyS256Pkce(input.codeVerifier, authorizationCode.codeChallenge)
     ) {
       throw new OAuthError("invalid_grant", "Authorization code exchange failed");
@@ -420,40 +483,59 @@ export function createOAuthService(
   }) {
     await authenticateClient(input.clientId, input.clientSecret);
     const tokenHash = hashToken(input.refreshToken);
-    const [stored] = await db.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
-    if (!stored || stored.clientId !== input.clientId) {
+    // Consume-and-rotate runs as one atomic statement: the guarded UPDATE
+    // claims the token, and a sibling CTE revokes the family when the claim
+    // fails for an already-used token of the same client. Unknown tokens and
+    // foreign-client tokens never trigger revocation, matching the original
+    // three-statement flow in a single round trip.
+    const claimed = await db.execute<{
+      user_id: string;
+      scopes: string[];
+      resource: string;
+      family_id: string;
+      expires_at: Date;
+    }>(sql`
+      with claimed as (
+        update refresh_tokens
+        set consumed_at = now()
+        where token_hash = ${tokenHash}
+          and client_id = ${input.clientId}
+          and consumed_at is null
+          and revoked_at is null
+          and expires_at > now()
+        returning user_id, scopes, resource, family_id, expires_at
+      ), revoke_stale as (
+        update refresh_tokens
+        set revoked_at = now()
+        where family_id = (select family_id from refresh_tokens where token_hash = ${tokenHash})
+          and exists (
+            select 1 from refresh_tokens
+            where token_hash = ${tokenHash}
+              and client_id = ${input.clientId}
+          )
+          and not exists (select 1 from claimed)
+      )
+      select user_id, scopes, resource, family_id, expires_at from claimed
+    `);
+    const [row] = claimed.rows;
+    if (!row) {
+      const [stored] = await db
+        .select({ clientId: refreshTokens.clientId })
+        .from(refreshTokens)
+        .where(eq(refreshTokens.tokenHash, tokenHash))
+        .limit(1);
+      if (stored && stored.clientId === input.clientId) {
+        throw new OAuthError("invalid_grant", "Refresh token reuse detected");
+      }
       throw new OAuthError("invalid_grant", "Refresh token is invalid");
     }
-    if (stored.consumedAt || stored.revokedAt || stored.expiresAt <= new Date()) {
-      await db
-        .update(refreshTokens)
-        .set({ revokedAt: new Date() })
-        .where(eq(refreshTokens.familyId, stored.familyId));
-      throw new OAuthError("invalid_grant", "Refresh token reuse detected");
-    }
-    const consumed = await db
-      .update(refreshTokens)
-      .set({ consumedAt: new Date() })
-      .where(
-        and(
-          eq(refreshTokens.tokenHash, tokenHash),
-          isNull(refreshTokens.consumedAt),
-          isNull(refreshTokens.revokedAt),
-          gt(refreshTokens.expiresAt, new Date()),
-        ),
-      )
-      .returning({ tokenHash: refreshTokens.tokenHash });
-    if (!consumed.length) {
-      await db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.familyId, stored.familyId));
-      throw new OAuthError("invalid_grant", "Refresh token reuse detected");
-    }
     return issueTokenSet({
-      userId: stored.userId,
-      clientId: stored.clientId,
-      scopes: stored.scopes,
-      resource: stored.resource,
-      familyId: stored.familyId,
-      refreshExpiresAt: stored.expiresAt,
+      userId: row.user_id,
+      clientId: input.clientId,
+      scopes: row.scopes,
+      resource: row.resource,
+      familyId: row.family_id,
+      refreshExpiresAt: row.expires_at,
     });
   }
 
@@ -483,6 +565,7 @@ export function createOAuthService(
 
   return {
     clientById,
+    invalidateClient,
     authenticateClient,
     startAuthorization,
     interaction,
