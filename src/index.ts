@@ -13,6 +13,7 @@ import { createSessionService } from "./oauth/sessions.js";
 import { createInternalUserService } from "./internal/users.js";
 import { createInternalApp } from "./internal/app.js";
 import { createPurgeService } from "./database/purge.js";
+import { createAuthEventWriter } from "../admin/api/authEvents.js";
 
 const config = await loadConfig();
 await migrateDatabase(config.databaseUrl);
@@ -25,10 +26,15 @@ const identity = createIdentityService(
 );
 const keys = await createKeyService(config, identity);
 const sessions = createSessionService(db);
-const oauth = createOAuthService(config, db, keys, identity);
+const recordAuthEvent = createAuthEventWriter(db);
+const oauth = createOAuthService(config, db, keys, identity, async (event) => {
+  await recordAuthEvent(event);
+});
 const microsoft = createMicrosoftService(config, db, identity);
 const internalUsers = createInternalUserService(db);
-const app = createApp(config, oauth, keys, sessions, identity, microsoft);
+const app = createApp(config, oauth, keys, sessions, identity, microsoft, {
+  recordAuthEvent,
+});
 const internalApp = createInternalApp(config.internalApiToken, internalUsers);
 
 const server = serve({ fetch: app.fetch, port: config.port }, () => {
