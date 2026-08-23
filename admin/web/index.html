@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Basis Admin</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, sans-serif; margin: 0; display: flex; min-height: 100vh; }
+      a { color: inherit; }
+      .sidebar { width: 210px; padding: 1rem; border-right: 1px solid #8884; }
+      .sidebar a { display: block; padding: .35rem .5rem; border-radius: 6px; text-decoration: none; }
+      .sidebar a:hover, .sidebar a.active { background: #8882; }
+      main { flex: 1; padding: 1.5rem; }
+      table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+      th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid #8884; }
+      button { cursor: pointer; }
+      input, select { padding: .3rem .45rem; }
+      .card { border: 1px solid #8884; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
+      .row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+      .muted { opacity: .65; font-size: .85rem; }
+      .danger { color: #c0392b; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+      pre { white-space: pre-wrap; font-size: .8rem; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
