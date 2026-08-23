@@ -6,13 +6,14 @@ import { Hono } from "hono";
 import { loadAdminConfig } from "./config.js";
 import { createDatabase } from "../src/database/client.js";
 import { createAdminApp } from "./api/app.js";
+import type { AppEnv } from "./api/middleware.js";
 
 const config = loadAdminConfig();
 const { db, pool } = createDatabase(config.databaseUrl);
 const { app: adminApi, sessionCookieName } = createAdminApp(config, db);
 void sessionCookieName;
 
-const root = new Hono();
+const root = new Hono<{ Bindings: Record<string, string>; Variables: AppEnv["Variables"] }>();
 root.route("/", adminApi);
 
 if (config.environment !== "test") {
