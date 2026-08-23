@@ -90,6 +90,17 @@ export function createApp(
   sessions: SessionService,
   identity: IdentityService,
   microsoft: MicrosoftService,
+  hooks?: {
+    recordAuthEvent?: (event: {
+      userId?: string | null;
+      kind: "sign_in" | "sign_in_failure" | "token_issued" | "token_refreshed" | "token_refresh_rejected" | "logout";
+      provider?: string | null;
+      clientId?: string | null;
+      success?: boolean;
+      ip?: string | null;
+      userAgent?: string | null;
+    }) => Promise<void>;
+  },
 ) {
   const app = new Hono();
   // Browsers enforce the __Host- prefix only over HTTPS, so production gets
@@ -435,6 +446,13 @@ export function createApp(
       // Same enforcement as the SSO-session path; defense in depth for
       // freshly authenticated users.
       if (client?.filterMode) assertClientEmailAccess(client, result.user.email);
+      await hooks?.recordAuthEvent?.({
+        userId: result.user.id,
+        kind: "sign_in",
+        provider: "basischina-microsoft",
+        ip: resolveClientIp(c),
+        userAgent: c.req.header("user-agent") ?? null,
+      });
       const sessionToken = await sessions.create(result.user.id);
       setCookie(c, SSO_COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
       await oauth.attachUser(result.authorizationRequestId, result.user.id, new Date());
@@ -442,6 +460,13 @@ export function createApp(
     } catch (error: unknown) {
       const ip = resolveClientIp(c);
       callbackFailures.limit(`microsoft-callback:${ip}`);
+      await hooks?.recordAuthEvent?.({
+        kind: "sign_in_failure",
+        provider: "basischina-microsoft",
+        success: false,
+        ip,
+        userAgent: c.req.header("user-agent") ?? null,
+      });
       return frontendFlowError(
         c,
         error instanceof OAuthError ? error : "Upstream Error: " + String(error),
@@ -518,8 +543,16 @@ export function createApp(
   );
 
   const logout = async (c: Context) => {
+    const current = await sessions.find(getCookie(c, SSO_COOKIE_NAME));
     await sessions.destroy(getCookie(c, SSO_COOKIE_NAME));
     deleteCookie(c, SSO_COOKIE_NAME, { path: "/" });
+    if (current) {
+      await hooks?.recordAuthEvent?.({
+        userId: current.userId,
+        kind: "logout",
+        ip: resolveClientIp(c),
+      });
+    }
     const interactionToken = getCookie(c, INTERACTION_COOKIE_NAME);
     let redirectTo = "/oauth/authorize";
     if (interactionToken) {
