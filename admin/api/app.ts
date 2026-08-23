@@ -26,7 +26,7 @@ const SESSION_COOKIE = "basis_admin_session";
 const BRIDGE_COOKIE = "basis_admin_bridge";
 
 export function createAdminApp(config: AdminConfig, db: Database) {
-  const app = new Hono<{ Bindings: unknown; Variables: AppEnv["Variables"] }>();
+  const app = new Hono<{ Bindings: Record<string, string>; Variables: AppEnv["Variables"] }>();
   const secureCookies = config.environment === "production";
   const sessionCookieName = secureCookies ? `__Host-${SESSION_COOKIE}` : SESSION_COOKIE;
   const bridgeCookieName = secureCookies ? `__Host-${BRIDGE_COOKIE}` : BRIDGE_COOKIE;
