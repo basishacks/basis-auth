@@ -152,3 +152,42 @@ These are NOT Http response codes.
 | 14501 | invalid_target | One or more resources is not registered for this application |
 | 2400 | invalid_request | Frontend authentication flow cookie not found or expired |
 | 50040 | server_error | Internal server error occured during login, such as connection error with microsoft login / authentication endpoint |
+
+## Management portal
+
+A separate Entra-style administration portal lives in dmin/ and runs as its
+own process (
+pm run dev:admin, port ADMIN_PORT). Administrators sign in
+through this IdP itself (authorization code + PKCE) and are gated by the fixed
+portal.* permission catalog in dmin/api/permissions.ts. Highlights:
+
+- Least-privilege database role: run scripts/create-admin-role.sql once, then
+  point ADMIN_DATABASE_URL at it. Audit and sign-in tables are append-only at
+  the grant level.
+- Step-up re-authentication (prompt=login) protects sensitive operations.
+- Guardrails: no self-permission edits, last-admin protection, shielded
+  privileged accounts behind portal.privileged.read.
+- Signed webhook alerts for privilege changes (ALERT_WEBHOOK_*).
+- Emergency lockout switch plus optional IP allowlist.
+
+Provision the portal's own client through OIDC_CLIENTS_JSON and set
+ADMIN_CLIENT_ID accordingly. Grant the first administrator with
+BOOTSTRAP_PERMISSION_GRANTS_JSON (applied once, at account creation).
+
+## Security hardening
+
+- Sliding-window rate limits on token, authorize, interaction, and callback
+  routes; exponential per-client backoff after repeated auth failures.
+- All user-controlled images are served with a sandboxing CSP so SVG logos and
+  avatars can never execute script.
+- Cookies use __Host- names in production with one-time re-login on upgrade.
+- Client applications support multiple rotation secrets with overlap windows;
+  plaintext secrets are displayed exactly once.
+- Expired sessions, codes, requests, and revoked tokens are swept hourly in
+  bounded batches (PURGE_INTERVAL_MS).
+- Emails are case-insensitively unique (db:check-dupes reports conflicts
+  before migrating).
+
+Run 
+pm test for the unit battery; PostgreSQL integration tests require
+Docker and RUN_POSTGRES_TESTS=1.
