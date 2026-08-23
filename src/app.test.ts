@@ -14,6 +14,16 @@ const config = {
   issuer: "https://auth.example.test",
   cookieKeys: ["a".repeat(32)],
   microsoft: undefined,
+  trustProxy: false,
+  purgeIntervalMs: 3_600_000,
+  rateLimits: {
+    tokenPerMinute: 30,
+    authorizePerMinute: 60,
+    interactionPerMinute: 120,
+    callbackMaxFailures: 10,
+  },
+  bodyLimitBytes: 1024 * 1024,
+  uploadBodyLimitBytes: 6 * 1024 * 1024,
 } as AppConfig;
 
 const app = createApp(
@@ -584,6 +594,110 @@ describe("authorization interactions", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("/oauth/authorize?client_id=client");
     expect(response.headers.get("set-cookie")).toContain("basis_bridge_error=");
+  });
+});
+
+describe("OIDC re-authentication and error hygiene", () => {
+  const loginSession = {
+    userId: "user-id",
+    authenticatedAt: new Date("2020-01-01T00:00:00.000Z"),
+  };
+  const buildAuthorizeApp = (
+    oauthOverrides: Partial<Record<keyof OAuthService, unknown>>,
+    sessionFind = vi.fn().mockResolvedValue(loginSession),
+  ) => {
+    const oauth = {
+      getAuthorization: vi
+        .fn()
+        .mockRejectedValue(new OAuthError("invalid_request", "expired", 400)),
+      startAuthorization: vi.fn().mockResolvedValue({ id: "request", interactionToken: "token" }),
+      ...oauthOverrides,
+    } as unknown as OAuthService;
+    const authorizationApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      { find: sessionFind } as unknown as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+    return { oauth, authorizationApp };
+  };
+
+  it("forces a fresh login when prompt=login is requested", async () => {
+    const { oauth, authorizationApp } = buildAuthorizeApp({});
+    await authorizationApp.request(
+      "/oauth/authorize?client_id=client&prompt=login",
+      { headers: { Cookie: "basis_sso=session-token" } },
+    );
+    expect(oauth.startAuthorization).toHaveBeenCalledWith(expect.objectContaining({ session: undefined }));
+  });
+
+  it("forces a fresh login when the authentication exceeds max_age", async () => {
+    const { oauth, authorizationApp } = buildAuthorizeApp({});
+    await authorizationApp.request(
+      "/oauth/authorize?client_id=client&max_age=5",
+      { headers: { Cookie: "basis_sso=session-token" } },
+    );
+    expect(oauth.startAuthorization).toHaveBeenCalledWith(expect.objectContaining({ session: undefined }));
+  });
+
+  it("keeps the existing session within the max_age window", async () => {
+    const freshSession = { userId: "user-id", authenticatedAt: new Date() };
+    const { oauth, authorizationApp } = buildAuthorizeApp({}, vi.fn().mockResolvedValue(freshSession));
+    await authorizationApp.request(
+      "/oauth/authorize?client_id=client&max_age=3600",
+      { headers: { Cookie: "basis_sso=session-token" } },
+    );
+    expect(oauth.startAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({ session: { userId: "user-id", authenticatedAt: freshSession.authenticatedAt } }),
+    );
+  });
+
+  it("encodes non-Latin1 upstream error text into the bridge cookie safely", async () => {
+    const oauth = {
+      getAuthorization: vi.fn().mockResolvedValue({ initialUri: "/oauth/authorize?client_id=client" }),
+      interaction: vi.fn().mockRejectedValue(new Error("Upstream failure \u2014 \u2018quoted\u2019")),
+    } as unknown as OAuthService;
+    const microsoft = { callback: vi.fn() } as unknown as MicrosoftService;
+    const errorApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      microsoft,
+    );
+    const response = await errorApp.request("/oauth/callback/microsoft?code=code&state=state", {
+      headers: { Cookie: "basis_bridge_id=valid-interaction" },
+    });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("set-cookie")).toContain("basis_bridge_error=");
+  });
+
+  it("returns generic failure descriptions outside development", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const brokenKeys = {} as KeyService;
+    Object.defineProperty(brokenKeys, "publicJwks", {
+      get() {
+        throw new Error("secret internal detail");
+      },
+    });
+    const hardenedApp = createApp(
+      { ...config, environment: "production" },
+      {} as OAuthService,
+      brokenKeys,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+    const response = await hardenedApp.request("/oauth/jwks");
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "server_error",
+      error_description: "The request could not be completed",
+    });
+    log.mockRestore();
   });
 });
 
