@@ -17,6 +17,8 @@ export interface RateLimitDecision {
 
 export interface RateLimiter {
   limit(key: string, now?: number): RateLimitDecision;
+  /** Number of tracked keys; useful for operational checks and tests. */
+  size(): number;
 }
 
 /**
@@ -33,7 +35,7 @@ export interface RateLimiter {
 export function createRateLimiter(options: { windowMs: number; limit: number }): RateLimiter {
   const { windowMs, limit } = options;
   const buckets = new Map<string, WindowState>();
-  let lastSweepAt = Date.now();
+  let lastSweepAt = Number.NEGATIVE_INFINITY;
 
   function sweep(now: number) {
     // Lazy eviction keeps dead clients from accumulating without a timer.
@@ -66,6 +68,9 @@ export function createRateLimiter(options: { windowMs: number; limit: number }):
       }
       state.current += 1;
       return { allowed: true, retryAfterSeconds: 0 };
+    },
+    size() {
+      return buckets.size;
     },
   };
 }
