@@ -5,7 +5,8 @@ import type { Database } from "../../../src/database/client.js";
 import { hashSecret } from "../../../src/database/seed.js";
 import { invalidateClient } from "../../../src/oauth/service.js";
 import { appAssets, clientSecrets, oidcClients } from "../../../src/database/schema.js";
-import { HttpGuardError, writeAudit, type AppEnv } from "../context.js";
+import { HttpGuardError, writeAudit } from "../context.js";
+import type { AppEnv } from "../middleware.js";
 
 type AdminApp = Hono<{ Bindings: Record<string, string>; Variables: AppEnv["Variables"] & { ip?: string } }>;
 
@@ -233,7 +234,8 @@ export function registerClientRoutes(app: AdminApp, deps: RouteDeps) {
     if (!body.success || !ALLOWED_LOGO_TYPES.includes(body.data.contentType)) {
       throw new HttpGuardError(400, "invalid_request", "Logo must be png, jpeg, webp, or svg");
     }
-    const bytes = Buffer.from(body.data, "base64");
+    const logoData = body.success ? body.data : undefined;
+    const bytes = Buffer.from(logoData!.data, "base64");
     if (bytes.length > MAX_LOGO_BYTES) {
       throw new HttpGuardError(413, "too_large", "Logo must be 512 KB or smaller");
     }
