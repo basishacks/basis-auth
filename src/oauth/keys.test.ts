@@ -47,12 +47,13 @@ describe("access-token user state", () => {
     } as AppConfig;
     const user = {
       id: "d2c3f635-527c-4c0a-bc1c-15d6af3f0946",
+      email: "user@example.test",
       disabled: false,
       tokensValidAfter: null as Date | null,
+      permissions: ["participant"],
     };
     const identity = {
-      findUser: async () => user,
-      permissionsFor: async () => ["participant"],
+      findUserCore: async () => user,
     } as unknown as IdentityService;
     const keys = await createKeyService(config, identity);
 
