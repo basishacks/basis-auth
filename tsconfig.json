@@ -15,6 +15,6 @@
       "@/*": ["./web/src/*"]
     }
   },
-  "include": ["src/**/*.ts", "examples/**/*.ts", "vitest.config.ts", "drizzle.config.ts"],
-  "exclude": ["dist", "web"]
+  "include": ["src/**/*.ts", "admin/**/*.ts", "examples/**/*.ts", "vitest.config.ts", "drizzle.config.ts"],
+  "exclude": ["dist", "web", "admin/web"]
 }
