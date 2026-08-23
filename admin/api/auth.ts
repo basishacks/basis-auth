@@ -19,7 +19,7 @@ export interface PortalAccount {
 
 /** Loads the account plus its permission list in a single round trip. */
 export async function loadPortalAccount(db: Database, userId: string): Promise<PortalAccount | undefined> {
-  const [row] = await db.execute<{
+  const result = await db.execute<{
     id: string;
     email: string;
     disabled: boolean;
@@ -35,7 +35,7 @@ export async function loadPortalAccount(db: Database, userId: string): Promise<P
     where u.id = ${userId}
     limit 1
   `);
-  const account = row.rows[0];
+  const account = result.rows[0];
   if (!account) return undefined;
   return {
     userId: account.id,
