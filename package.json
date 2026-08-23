@@ -24,7 +24,8 @@
     "clients:add": "tsx scripts/add-client.ts",
     "clients:remove": "tsx scripts/remove-client.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/database/migrate.ts"
+    "db:migrate": "tsx src/database/migrate.ts",
+    "db:check-dupes": "tsx scripts/check-dupes.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.12",
