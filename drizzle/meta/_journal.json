@@ -57,6 +57,13 @@
       "when": 1787474908963,
       "tag": "0007_confused_mephisto",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787475590449,
+      "tag": "0008_legal_eternity",
+      "breakpoints": true
     }
   ]
 }
