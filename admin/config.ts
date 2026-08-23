@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  PORT: z.coerce.number().int().positive().default(3100),
+  ADMIN_PORT: z.coerce.number().int().positive().default(3100),
   ADMIN_PUBLIC_URL: z.url().transform((url) => url.replace(/\/$/, "")),
   ADMIN_DATABASE_URL: z.string().min(1),
   OIDC_ISSUER: z.url().transform((issuer) => issuer.replace(/\/$/, "")),
@@ -23,8 +23,7 @@ const environmentSchema = z.object({
 
 export interface AdminConfig {
   environment: "development" | "test" | "production";
-  port: number;
-  publicUrl: string;
+  port: number;  publicUrl: string;
   databaseUrl: string;
   issuer: string;
   clientId: string;
@@ -47,7 +46,7 @@ export function loadAdminConfig(source: NodeJS.ProcessEnv = process.env): AdminC
   }
   return {
     environment: env.NODE_ENV,
-    port: env.PORT,
+    port: env.ADMIN_PORT,
     publicUrl: env.ADMIN_PUBLIC_URL,
     databaseUrl: env.ADMIN_DATABASE_URL,
     issuer: env.OIDC_ISSUER,
