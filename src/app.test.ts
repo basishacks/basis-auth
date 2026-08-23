@@ -226,7 +226,7 @@ describe("authorization interactions", () => {
       getAuthorization: vi.fn().mockResolvedValue(request),
       clearInteractionUser: vi.fn().mockResolvedValue(undefined),
     } as unknown as OAuthService;
-    const sessions = { destroy: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService;
+    const sessions = { find: vi.fn().mockResolvedValue(undefined), destroy: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService;
     const authorizationApp = createApp(
       config,
       oauth,
@@ -258,7 +258,7 @@ describe("authorization interactions", () => {
       config,
       oauth,
       { publicJwks: { keys: [] } } as unknown as KeyService,
-      { destroy: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService,
+      { find: vi.fn().mockResolvedValue(undefined), destroy: vi.fn().mockResolvedValue(undefined) } as unknown as SessionService,
       {} as IdentityService,
       {} as MicrosoftService,
     );
