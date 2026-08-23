@@ -49,7 +49,7 @@ export function assertClientEmailAccess(
   email: string,
 ) {
   const normalizedEmail = email.trim().toLowerCase();
-  const matches = client.filterContent.includes(normalizedEmail);
+  const matches = (client.filterContent ?? []).includes(normalizedEmail);
   if (
     (client.filterMode === "whitelist" && !matches) ||
     (client.filterMode === "blacklist" && matches)
