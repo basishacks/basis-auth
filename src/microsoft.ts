@@ -17,10 +17,20 @@ async function profilePicture(
   subject: string,
 ) {
   if (typeof pictureUrl !== "string") return defaultProfilePicture(issuer, subject);
+  const parsedPictureUrl = new URL(pictureUrl);
+  // Only HTTPS origins are fetched, and the upstream access token is attached
+  // exclusively to Microsoft's graph host so it cannot leak elsewhere.
+  if (
+    parsedPictureUrl.protocol !== "https:" ||
+    !/^([a-z0-9-]+\.)*microsoftonline\.com$|^graph\.microsoft\.com$/.test(parsedPictureUrl.hostname)
+  ) {
+    return defaultProfilePicture(issuer, subject);
+  }
 
   try {
-    const response = await fetch(pictureUrl, {
+    const response = await fetch(parsedPictureUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(5_000),
     });
     const contentType = response.headers.get("content-type");
     if (!response.ok || !contentType?.startsWith("image/")) throw new Error("Profile picture unavailable");
