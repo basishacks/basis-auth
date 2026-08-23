@@ -73,6 +73,11 @@ interface CachedClient {
 const CLIENT_CACHE_TTL_MS = 30_000;
 const clientCache = new Map<string, CachedClient>();
 
+/** Drops a memoized client row; call after any direct write to `oidc_clients`. */
+export function invalidateClient(clientId: string) {
+  clientCache.delete(clientId);
+}
+
 export function createOAuthService(
   config: AppConfig,
   db: Database,
@@ -94,11 +99,6 @@ export function createOAuthService(
     const client: OAuthClient = { ...row, metadata: parseMetadata(row.metadata) };
     clientCache.set(clientId, { client, expiresAt: Date.now() + CLIENT_CACHE_TTL_MS });
     return client;
-  }
-
-  /** Drops a memoized client row; call after any direct write to `oidc_clients`. */
-  function invalidateClient(clientId: string) {
-    clientCache.delete(clientId);
   }
 
   async function authenticateClient(clientId: string, secret?: string) {
