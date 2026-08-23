@@ -21,6 +21,12 @@ import {
   type AppEnv,
 } from "./middleware.js";
 import { sendWebhookAlert } from "./webhook.js";
+import { registerUserRoutes } from "./routes/users.js";
+import { registerClientRoutes } from "./routes/clients.js";
+import { registerResourceRoutes } from "./routes/resources.js";
+import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerLogRoutes } from "./routes/logs.js";
+import { registerDashboardRoutes } from "./routes/dashboard.js";
 
 const SESSION_COOKIE = "basis_admin_session";
 const BRIDGE_COOKIE = "basis_admin_bridge";
@@ -48,6 +54,18 @@ export function createAdminApp(config: AdminConfig, db: Database) {
 
   app.use("*", createIpAllowlistMiddleware(config.ipAllowlist, resolveClientIp));
   app.use("/api/*", createLockoutMiddleware(db));
+
+  const routeDeps = {
+    db,
+    resolveClientIp,
+    alert: config.alertWebhook,
+  };
+  registerUserRoutes(app, routeDeps);
+  registerClientRoutes(app, routeDeps);
+  registerResourceRoutes(app, routeDeps);
+  registerSessionRoutes(app, routeDeps);
+  registerLogRoutes(app, routeDeps);
+  registerDashboardRoutes(app, routeDeps);
 
   app.get("/auth/start", async (c) => {
     try {
