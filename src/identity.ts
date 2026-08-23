@@ -100,6 +100,8 @@ export function createIdentityService(
       })
       .returning({ id: users.id, inserted: sql<boolean>`(xmax = 0)` });
 
+    if (!user) throw new Error("Upsert did not return the account row");
+
     // Bootstrap grants apply exactly once, when the account row is created,
     // so permissions removed later by an administrator stay removed.
     if (!user.inserted) return (await findUser(user.id))!;
