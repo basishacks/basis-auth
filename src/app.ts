@@ -5,6 +5,7 @@ import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { Hono, type Context } from "hono";
 import { secureHeaders } from "hono/secure-headers";
+import { and, eq, sql } from "drizzle-orm";
 import type { AppConfig } from "./config.js";
 import type { IdentityService } from "./identity.js";
 import type { KeyService } from "./oauth/keys.js";
@@ -20,6 +21,10 @@ import {
   rateLimitMiddleware,
 } from "./security/rateLimit.js";
 import { createClientIpResolver } from "./security/ip.js";
+import type { Database } from "./database/client.js";
+import { localCredentials, users } from "./database/schema.js";
+import { generateTempPassword, hashPassword, validatePassword, verifyPassword } from "../admin/api/passwords.js";
+import { decodeBase32, verifyTotp } from "../admin/api/totp.js";
 
 const SSO_COOKIE = "basis_sso";
 const INTERACTION_COOKIE = "basis_bridge_id";
@@ -91,6 +96,7 @@ export function createApp(
   identity: IdentityService,
   microsoft: MicrosoftService,
   hooks?: {
+    db?: Database;
     recordAuthEvent?: (event: {
       userId?: string | null;
       kind: "sign_in" | "sign_in_failure" | "token_issued" | "token_refreshed" | "token_refresh_rejected" | "logout";
@@ -539,6 +545,130 @@ export function createApp(
       if (!token) throw new OAuthError("invalid_request", "token is required");
       await oauth.revoke(token, credentials.clientId, credentials.clientSecret);
       return c.body(null, 200);
+    },
+  );
+
+  // --- Local (username + password) login path for provisioned accounts. ---
+  const localLoginBackoff = createFailureBackoff({ threshold: 5, baseMs: 30_000, maxMs: 15 * 60_000 });
+
+  app.post(
+    "/oauth/interaction/:uid/login",
+    requestSizeGuard,
+    rateLimitMiddleware(interactionLimiter, (c) => resolveClientIp(c)),
+    async (c) => {
+      if (!hooks?.db) return c.json({ error: "local_login_disabled" }, 501);
+      const uid = c.req.param("uid");
+      if (!csrfValid(uid, c.req.header("x-csrf-token"))) {
+        return c.json({ error: "invalid_csrf_token" }, 403);
+      }
+      const { request } = await oauth.interaction(uid, getCookie(c, INTERACTION_COOKIE_NAME));
+      const body = await c.req.parseBody();
+      const email = formValue(body, "email")?.trim().toLowerCase();
+      const password = formValue(body, "password");
+      if (!email || !password) throw new OAuthError("invalid_request", "Email and password are required");
+
+      const blockedForMs = localLoginBackoff.check(email);
+      if (blockedForMs > 0) throw new OAuthError("rate_limited", "Too many attempts. Try again later.", 429);
+
+      const db = hooks.db;
+      const fail = async (): Promise<never> => {
+        localLoginBackoff.record(email);
+        await hooks?.recordAuthEvent?.({
+          kind: "sign_in_failure",
+          provider: "local",
+          success: false,
+          ip: resolveClientIp(c),
+        });
+        throw new OAuthError("invalid_grant", "Invalid email or password", 401);
+      };
+
+      const [account] = await db
+        .select({
+          userId: users.id,
+          disabled: users.disabled,
+          passwordHash: localCredentials.passwordHash,
+          mustResetPassword: localCredentials.mustResetPassword,
+          totpConfirmedAt: localCredentials.totpConfirmedAt,
+          totpSecretEnc: localCredentials.totpSecretEnc,
+        })
+        .from(users)
+        .innerJoin(localCredentials, eq(localCredentials.userId, users.id))
+        .where(eq(users.email, email))
+        .limit(1);
+      if (!account || account.disabled) await fail();
+      if (!(await verifyPassword(password, account!.passwordHash))) {
+        await db
+          .update(localCredentials)
+          .set({ failedAttempts: sql`${localCredentials.failedAttempts} + 1` })
+          .where(eq(localCredentials.userId, account!.userId));
+        await fail();
+      }
+      // Second factor when enrolled.
+      if (account!.totpConfirmedAt && account!.totpSecretEnc) {
+        const code = formValue(body, "totp") ?? "";
+        const recoveryCode = formValue(body, "recoveryCode");
+        let factorOk = verifyTotp(decodeBase32(Buffer.from(account!.totpSecretEnc).toString()), code);
+        if (!factorOk && recoveryCode) {
+          const hashed = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(recoveryCode))).toString("base64url");
+          const result = await db.execute(sql`
+            with used as (
+              update local_credentials
+              set recovery_codes = (
+                select coalesce(jsonb_agg(rc), '[]'::jsonb) from jsonb_array_elements_text(recovery_codes) rc
+                where rc <> ${JSON.stringify(hashed)}::jsonb
+              )
+              where user_id = ${account!.userId} and recovery_codes ? ${hashed}
+              returning user_id
+            )
+            select count(*)::int as removed from used
+          `);
+          factorOk = Number((result.rows[0] as { removed?: number } | undefined)?.removed ?? 0) > 0;
+        }
+        if (!factorOk) await fail();
+      }
+      await db
+        .update(localCredentials)
+        .set({ failedAttempts: 0 })
+        .where(eq(localCredentials.userId, account!.userId));
+      await hooks.recordAuthEvent?.({ userId: account!.userId, kind: "sign_in", provider: "local", ip: resolveClientIp(c) });
+
+      const sessionToken = await sessions.create(account!.userId);
+      setCookie(c, SSO_COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 });
+      await oauth.attachUser(request.id, account!.userId, new Date());
+      return c.json({
+        redirectTo: request.initialUri,
+        mustResetPassword: account!.mustResetPassword === true,
+      });
+    },
+  );
+
+  app.post(
+    "/oauth/interaction/:uid/password",
+    requestSizeGuard,
+    rateLimitMiddleware(interactionLimiter, (c) => resolveClientIp(c)),
+    async (c) => {
+      if (!hooks?.db) return c.json({ error: "local_login_disabled" }, 501);
+      const uid = c.req.param("uid");
+      if (!csrfValid(uid, c.req.header("x-csrf-token"))) {
+        return c.json({ error: "invalid_csrf_token" }, 403);
+      }
+      const { request } = await oauth.interaction(uid, getCookie(c, INTERACTION_COOKIE_NAME));
+      if (!request.userId) throw new OAuthError("access_denied", "Not authenticated", 403);
+      const body = await c.req.parseBody();
+      const newPassword = formValue(body, "newPassword");
+      const check = validatePassword(newPassword ?? "");
+      if (!check.valid) throw new OAuthError("invalid_request", check.reason ?? "Invalid password");
+      await hooks.db
+        .update(localCredentials)
+        .set({
+          passwordHash: await hashPassword(newPassword!),
+          passwordUpdatedAt: new Date(),
+          mustResetPassword: false,
+          lockedUntil: null,
+          failedAttempts: 0,
+        })
+        .where(eq(localCredentials.userId, request.userId));
+      return c.json({ redirectTo: request.initialUri });
     },
   );
 
