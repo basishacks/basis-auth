@@ -84,6 +84,14 @@ export function createOAuthService(
   db: Database,
   keys: KeyService,
   identity: IdentityService,
+  authEvents?: (event: {
+    userId?: string | null;
+    kind: "sign_in" | "sign_in_failure" | "token_issued" | "token_refreshed" | "token_refresh_rejected" | "logout";
+    provider?: string | null;
+    clientId?: string | null;
+    success?: boolean;
+    detail?: Record<string, unknown>;
+  }) => Promise<void>,
 ) {
   async function clientById(clientId: string): Promise<OAuthClient | undefined> {
     const cached = clientCache.get(clientId);
@@ -492,6 +500,12 @@ export function createOAuthService(
       )
       .returning({ codeHash: authorizationCodes.codeHash });
     if (!consumed.length) throw new OAuthError("invalid_grant", "Authorization code was already used");
+    await authEvents?.({
+      userId: authorizationCode.userId,
+      kind: "token_issued",
+      clientId: input.clientId,
+      detail: { resource: authorizationCode.resource, scopes: authorizationCode.scopes },
+    });
     return issueTokenSet({
       userId: authorizationCode.userId,
       clientId: authorizationCode.clientId,
@@ -551,10 +565,17 @@ export function createOAuthService(
         .where(eq(refreshTokens.tokenHash, tokenHash))
         .limit(1);
       if (stored && stored.clientId === input.clientId) {
+        await authEvents?.({ kind: "token_refresh_rejected", clientId: input.clientId, success: false, detail: { reason: "reuse" } });
         throw new OAuthError("invalid_grant", "Refresh token reuse detected");
       }
       throw new OAuthError("invalid_grant", "Refresh token is invalid");
     }
+    await authEvents?.({
+      userId: row.user_id,
+      kind: "token_refreshed",
+      clientId: input.clientId,
+      detail: { resource: row.resource },
+    });
     return issueTokenSet({
       userId: row.user_id,
       clientId: input.clientId,
