@@ -93,13 +93,20 @@ export function createAdminAuthService(config: AdminConfig, db: Database) {
     : { execute: [oidc.allowInsecureRequests] };
 
   function configuration() {
-    discovered ??= oidc.discovery(
-      new URL(config.issuer),
-      config.clientId,
-      undefined,
-      undefined,
-      devRequestOptions,
-    );
+    // Retryable: a failed attempt clears itself so a later call can try
+    // again once the identity provider comes up.
+    discovered ??= oidc
+      .discovery(
+        new URL(config.issuer),
+        config.clientId,
+        undefined,
+        undefined,
+        devRequestOptions,
+      )
+      .catch((error) => {
+        discovered = undefined;
+        throw error;
+      });
     return discovered;
   }
 
