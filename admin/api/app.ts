@@ -78,7 +78,12 @@ export function createAdminApp(config: AdminConfig, db: Database) {
       return c.json({ redirectTo: login.redirectTo });
     } catch (error) {
       console.error("Portal login start failed", error);
-      throw new HttpGuardError(502, "upstream_error", "The identity provider is unreachable");
+      const cause = (error as { cause?: { code?: string } })?.cause?.code ?? "";
+      const description =
+        cause === "ECONNREFUSED"
+          ? "The identity provider is not reachable. Start it with: npm run dev:auth"
+          : "The identity provider is unreachable";
+      throw new HttpGuardError(502, "upstream_error", description);
     }
   });
 
