@@ -10,7 +10,7 @@
     "esbuild": "0.28.1"
   },
   "scripts": {
-    "dev": "npm run build:web && concurrently --kill-others-on-fail -n auth,client \"npm run dev:auth\" \"npm run dev:client\"",
+    "dev": "npm run build:web && concurrently --kill-others-on-fail -n auth,client,admin \"npm run dev:auth\" \"npm run dev:client\" \"npm run dev:admin\"",
     "dev:admin": "tsx watch admin/index.ts",
     "dev:auth": "tsx watch src/index.ts",
     "dev:client": "vite build --watch --config web/vite.config.ts",
