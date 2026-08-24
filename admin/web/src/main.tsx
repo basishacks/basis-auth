@@ -42,10 +42,13 @@ interface Me {
 const AuthContext = createContext<{ me: Me | null; reload: () => void }>({ me: null, reload: () => undefined });
 const useAuth = () => useContext(AuthContext);
 
-async function startLogin(): Promise<{ redirectTo: string }> {
-  const response = await fetch("/auth/start", { method: "GET" }).catch(() => undefined);
-  void response;
-  return fetch("/admin/api/auth/start").then((r) => r.json());
+async function startLogin(): Promise<string> {
+  const response = await fetch("/admin/api/auth/start");
+  const body = await response.json().catch(() => ({}) as any);
+  if (!response.ok || typeof body.redirectTo !== "string") {
+    throw new Error(body.error_description ?? "Could not start sign-in");
+  }
+  return body.redirectTo as string;
 }
 
 function useApi<T>(path: string | null): T | undefined {
@@ -95,9 +98,31 @@ function TypeToConfirm({ label, expected, onConfirm }: { label: string; expected
 // ---------------------------------------------------------------------------
 
 function Login() {
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    void startLogin().then((login) => { window.location.href = login.redirectTo; });
-  }, []);
+    let cancelled = false;
+    setError(null);
+    startLogin()
+      .then((redirectTo) => {
+        if (!cancelled) window.location.href = redirectTo;
+      })
+      .catch((cause: Error) => {
+        if (!cancelled) setError(cause.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+  if (error) {
+    return (
+      <div className="card" style={{ maxWidth: 480, margin: "4rem auto" }}>
+        <h3>Cannot start sign-in</h3>
+        <p>{error}</p>
+        <button onClick={() => setAttempt((n) => n + 1)}>Retry</button>
+      </div>
+    );
+  }
   return <p>Redirecting to sign-in…</p>;
 }
 
