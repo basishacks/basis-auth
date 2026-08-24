@@ -10,7 +10,7 @@ import { BrowserRouter, Link, Navigate, Route, Routes, useParams, useLocation } 
 let csrfToken = "";
 
 export async function api(path: string, options: RequestInit = {}): Promise<any> {
-  const response = await fetch(`/admin/api${path}`, {
+  const response = await fetch(`/api${path}`, {
     ...options,
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
@@ -43,7 +43,7 @@ const AuthContext = createContext<{ me: Me | null; reload: () => void }>({ me: n
 const useAuth = () => useContext(AuthContext);
 
 async function startLogin(): Promise<string> {
-  const response = await fetch("/admin/api/auth/start");
+  const response = await fetch("/auth/start");
   const body = await response.json().catch(() => ({}) as any);
   if (!response.ok || typeof body.redirectTo !== "string") {
     throw new Error(body.error_description ?? "Could not start sign-in");
@@ -292,7 +292,7 @@ function Shell() {
   const [me, setMe] = useState<Me | null>(null);
   const [failed, setFailed] = useState(false);
   const load = useCallback(() => {
-    fetch("/admin/api/me")
+    fetch("/api/me")
       .then(async (response) => {
         if (!response.ok) throw new Error("anonymous");
         const body = await response.json();
