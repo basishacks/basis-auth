@@ -162,10 +162,12 @@ Requirements: Node.js 24, npm, and PostgreSQL (Option A above is the easiest pat
 ```bash
 cp .env.example .env
 npm install
-npm run keys:generate
+npm run setup
 ```
 
-Put the generated JSON into `OIDC_JWKS_JSON`, configure Microsoft Entra, then register this redirect URI in the Entra application:
+`npm run setup` fills every generated secret directly into `.env` — signing key, cookie keys, internal API token, and the management portal's client registration (ID plus its entries in `OIDC_CLIENTS_JSON`/`OIDC_RESOURCES_JSON`, with the redirect URI derived from `ADMIN_PUBLIC_URL`). It is idempotent: re-running only fills placeholders that are still empty, never overwriting values you set.
+
+Configure Microsoft Entra next, then register this redirect URI in the Entra application:
 
 ```text
 http://localhost:3000/oauth/callback/microsoft
