@@ -308,3 +308,28 @@ Provision the portal's own client through `OIDC_CLIENTS_JSON` (public client, PK
 - Emails are case-insensitively unique (`db:check-dupes` reports conflicts before migrating).
 
 Run `npm test` for the unit battery; PostgreSQL integration tests require Docker and `RUN_POSTGRES_TESTS=1`.
+
+## Documentation site
+
+The VitePress documentation lives in the docs/ submodule
+([basishacks/basis-docs](https://github.com/basishacks/basis-docs)).
+
+Clone with everything:
+
+```bash
+git clone --recurse-submodules git@github.com:basishacks/basis-auth.git    # SSH
+git clone --recurse-submodules https://github.com/basishacks/basis-auth.git  # HTTPS
+```
+
+If you already cloned, fetch it once:
+
+```bash
+git submodule update --init docs
+```
+
+Both URLs work. The .gitmodules entry uses HTTPS so clones succeed anywhere;
+SSH users can route through keys permanently with:
+
+```bash
+git config url."git@github.com:".insteadOf "https://github.com/"
+```
