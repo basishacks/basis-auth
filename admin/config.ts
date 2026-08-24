@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+// dotenv represents unset variables as EMPTY STRINGS, which Zod otherwise
+// treats as present values and rejects against format/length constraints.
+const optional = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    schema.optional(),
+  );
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   ADMIN_PORT: z.coerce.number().int().positive().default(3100),
@@ -15,10 +23,10 @@ const environmentSchema = z.object({
   STEP_UP_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(8),
   ADMIN_IP_ALLOWLIST: z.string().optional(),
-  ALERT_WEBHOOK_URL: z.url().optional(),
+  ALERT_WEBHOOK_URL: optional(z.url()),
   // Required whenever ALERT_WEBHOOK_URL is set; signatures let the receiver
   // prove an alert genuinely came from this portal.
-  ALERT_WEBHOOK_SECRET: z.string().min(32).optional(),
+  ALERT_WEBHOOK_SECRET: optional(z.string().min(32)),
 });
 
 export interface AdminConfig {
