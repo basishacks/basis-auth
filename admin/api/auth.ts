@@ -86,8 +86,20 @@ function decodeBridge(secret: string, value: string): BridgePayload | undefined 
 export function createAdminAuthService(config: AdminConfig, db: Database) {
   let discovered: Promise<oidc.Configuration> | undefined;
 
+  // openid-client refuses plaintext HTTP by default; local development runs
+  // the IdP over plain HTTP, so insecure requests are allowed there only.
+  const devRequestOptions: Record<string, unknown> = config.environment === "production"
+    ? {}
+    : { execute: [oidc.allowInsecureRequests] };
+
   function configuration() {
-    discovered ??= oidc.discovery(new URL(config.issuer), config.clientId);
+    discovered ??= oidc.discovery(
+      new URL(config.issuer),
+      config.clientId,
+      undefined,
+      undefined,
+      devRequestOptions,
+    );
     return discovered;
   }
 
@@ -143,11 +155,17 @@ export function createAdminAuthService(config: AdminConfig, db: Database) {
     const bridge = input.bridge ? decodeBridge(config.cookieKeys[0]!, input.bridge) : undefined;
     if (!bridge) throw new HttpGuardError(400, "invalid_request", "Login attempt expired");
     const configuration_ = await configuration();
-    const tokens = await oidc.authorizationCodeGrant(configuration_, input.callbackUrl, {
-      pkceCodeVerifier: bridge.verifier,
-      expectedState: bridge.state,
-      expectedNonce: bridge.nonce,
-    });
+    const tokens = await oidc.authorizationCodeGrant(
+      configuration_,
+      input.callbackUrl,
+      {
+        pkceCodeVerifier: bridge.verifier,
+        expectedState: bridge.state,
+        expectedNonce: bridge.nonce,
+      },
+      undefined,
+      devRequestOptions,
+    );
     const claims = tokens.claims();
     if (!claims?.sub) throw new HttpGuardError(400, "invalid_request", "Upstream identity missing");
 
