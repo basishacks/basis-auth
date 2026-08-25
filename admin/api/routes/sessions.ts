@@ -23,14 +23,15 @@ export function registerSessionRoutes(app: AdminApp, deps: RouteDeps) {
 
   app.get("/api/sessions", async (c) => {
     const cursorRaw = new URL(c.req.url).searchParams.get("cursor");
-    const cursorTs = cursorRaw ? Number(cursorRaw.split("_")[0]) : undefined;
+    const cursorTs = cursorRaw && Number.isFinite(Number(cursorRaw.split("_")[0]))
+      ? new Date(Number(cursorRaw.split("_")[0])).toISOString()
+      : null;
     const result = await db.execute<Record<string, unknown>>(sql`
-      select 'a_' || left(a.id_hash, 12) as id, 'sso' as kind, a.user_id as "userId", u.email,
-             a.authenticated_at as "authTime", a.created_at as "createdAt", a.expires_at as "expiresAt",
-             a.ip::text as ip, a.user_agent as "userAgent"
+      select 'a_' || left(a.id_hash, 12) as id, a.user_id as "userId", u.email,
+             a.authenticated_at as "authTime", a.created_at as "createdAt", a.expires_at as "expiresAt"
       from auth_sessions a join users u on u.id = a.user_id
       where a.expires_at > now()
-        and (${cursorTs ?? null}::timestamptz is null or a.created_at < ${cursorTs ? new Date(cursorTs).toISOString() : null}::timestamptz)
+        and (${cursorTs}::timestamptz is null or a.created_at < ${cursorTs}::timestamptz)
       order by a.created_at desc
       limit 51
     `);
@@ -60,13 +61,18 @@ export function registerSessionRoutes(app: AdminApp, deps: RouteDeps) {
   });
 
   app.get("/api/tokens", async (c) => {
+    // onlyActive is a server-side boolean, safe to inline; parameterizing it
+    // inside an OR leaves Postgres unable to settle param types.
     const onlyActive = c.req.query("active") !== "false";
+    const activeClause = onlyActive
+      ? "t.revoked_at is null and t.consumed_at is null and t.expires_at > now()"
+      : "true";
     const result = await db.execute<Record<string, unknown>>(sql`
       select t.family_id as "familyId", t.user_id as "userId", u.email, t.client_id as "clientId",
              t.resource, t.scopes, t.created_at as "createdAt", t.expires_at as "expiresAt",
              t.revoked_at as "revokedAt", t.consumed_at as "consumedAt"
       from refresh_tokens t join users u on u.id = t.user_id
-      where (${onlyActive} or true) and (t.revoked_at is null and t.consumed_at is null and t.expires_at > now() or ${!onlyActive})
+      where ${sql.raw(activeClause)}
       order by t.created_at desc
       limit 100
     `);
