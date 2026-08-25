@@ -6,6 +6,7 @@ import { hashSecret } from "../../../src/database/seed.js";
 import { invalidateClient } from "../../../src/oauth/service.js";
 import { appAssets, clientSecrets, oidcClients } from "../../../src/database/schema.js";
 import { HttpGuardError, writeAudit } from "../context.js";
+import { requireStepUp } from "../middleware.js";
 import type { AppEnv } from "../middleware.js";
 
 type AdminApp = Hono<{ Bindings: Record<string, string>; Variables: AppEnv["Variables"] & { ip?: string } }>;
@@ -14,6 +15,7 @@ export interface RouteDeps {
   db: Database;
   resolveClientIp: (c: Context) => string;
   alert?: { url: string; secret: string };
+  stepUpSeconds: number;
 }
 
 const MAX_LOGO_BYTES = 512 * 1024;
@@ -173,7 +175,7 @@ export function registerClientRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ secrets: rows });
   });
 
-  app.post("/api/clients/:clientId/secrets", async (c) => {
+  app.post("/api/clients/:clientId/secrets", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const clientId = c.req.param("clientId");
     const body = z
@@ -271,3 +273,5 @@ export function registerClientRoutes(app: AdminApp, deps: RouteDeps) {
     return c.body(new Uint8Array(asset.bytes));
   });
 }
+
+
