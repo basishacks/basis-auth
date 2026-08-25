@@ -551,14 +551,33 @@ function Users() {
   const [query, setQuery] = useState(globalQuery ?? "");
   useEffect(() => setQuery(globalQuery ?? ""), [globalQuery]);
   const debounced = useDebounced(query, 250);
-  const { data, loading } = useApi<{ users: any[] }>(`/users?query=${encodeURIComponent(debounced)}`);
+  const { data, loading, reload } = useApi<{ users: any[] }>(`/users?query=${encodeURIComponent(debounced)}`);
   const navigate = useNavigate();
+  const toast = useToast();
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ email: "", displayName: "" });
+  const [secret, setSecret] = useState<string | null>(null);
+
+  const createUser = () =>
+    api("/users/local", { method: "POST", body: JSON.stringify(form) })
+      .then((result: any) => {
+        setCreating(false);
+        setForm({ email: "", displayName: "" });
+        setSecret(result.tempPassword);
+        reload();
+      })
+      .catch((cause: Error) => toast(cause.message, "err"));
 
   return (
     <>
       <Crumbs trail={["Users"]} />
-      <h1 className="page-title">Users</h1>
-      <p className="page-sub">All identities that can sign in through the directory.</p>
+      <div className="page-head">
+        <div className="grow">
+          <h1 className="page-title">Users</h1>
+          <p className="page-sub" style={{ marginBottom: 0 }}>All identities that can sign in through the directory.</p>
+        </div>
+        <button className="btn primary" onClick={() => setCreating(true)}><Icons.plus /> New local user</button>
+      </div>
       <div className="toolbar">
         <input className="input" placeholder="Filter by email or name…" style={{ width: 280 }}
           value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -578,10 +597,7 @@ function Users() {
                       <td>
                         <div className="usercell">
                           <span className="avatar">{initials(user.displayName, user.email)}</span>
-                          <div>
-                            <div>{user.email}{user.privileged && <> <Icons.shield size={12} title="privileged" /></>}</div>
-                            <div className="muted mono">{user.id.slice(0, 8)}…</div>
-                          </div>
+                          <div>{user.email}</div>
                         </div>
                       </td>
                       <td>{user.displayName ?? "—"}</td>
@@ -595,6 +611,33 @@ function Users() {
           </table>
         </div>
       </div>
+
+      {creating && (
+        <Modal title="Create a local user" onClose={() => setCreating(false)}>
+          <p style={{ marginTop: 0 }}>The account signs in with a temporary password (shown once after creation) and must reset it at first login.</p>
+          <label className="field">
+            <span>Email address</span>
+            <input className="input" placeholder="name@example.com" value={form.email}
+              onChange={(event) => setForm((f) => ({ ...f, email: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Display name</span>
+            <input className="input" placeholder="Jordan Smith" value={form.displayName}
+              onChange={(event) => setForm((f) => ({ ...f, displayName: event.target.value }))} />
+          </label>
+          <div className="toolbar" style={{ marginBottom: 0, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={() => setCreating(false)}>Cancel</button>
+            <button
+              className="btn primary"
+              disabled={!/.+@.+\..+/.test(form.email) || form.displayName.trim().length === 0}
+              onClick={createUser}
+            >
+              Create user
+            </button>
+          </div>
+        </Modal>
+      )}
+      {secret && <SecretModal title="Temporary password" secret={secret} onClose={() => setSecret(null)} />}
       <p className="muted" style={{ marginTop: 8 }}>
         Signed in as <strong>{me?.email}</strong>. Self-editing is blocked by policy; use another administrator for changes to your own account.
       </p>
@@ -604,18 +647,23 @@ function Users() {
 
 function UserDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { me, reload } = useAuth();
   const toast = useToast();
-  const { data, loading, error } = useApi<{ user: any; activeSessions?: number }>(id ? `/users/${id}` : null);
+  const { data, loading, error } = useApi<{ user: any }>(id ? `/users/${id}` : null);
   const [chips, setChips] = useState<string[] | null>(null);
   const [addValue, setAddValue] = useState("");
-  const [confirm, setConfirm] = useState<null | { kind: "disable" | "enable" | "signout" | "reset" }>(null);
+  const [confirm, setConfirm] = useState<null | { kind: "disable" | "enable" | "signout" | "reset" | "delete" }>(null);
+  const [typedEmail, setTypedEmail] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
 
   const user = data?.user;
-  useEffect(() => setChips(user ? user.permissions.filter((p: string) => p.startsWith("portal.")) : null), [user]);
+  useEffect(() => {
+    setChips(user ? user.permissions.filter((p: string) => p.startsWith("portal.")) : null);
+    setTypedEmail("");
+  }, [user]);
 
-  if (loading) return (<><Crumbs trail={["Users", "…"]} /><div className="card"><div className="skel" /><div className="skel" style={{ width: "70%" }} /></div></>);
+  if (loading) return (<><Crumbs trail={["Users", "Loading…"]} /><div className="card"><div className="skel" /><div className="skel" style={{ width: "70%" }} /></div></>);
   if (error || !user) return (<><Crumbs trail={["Users"]} /><div className="banner locked"><Icons.alert /> {error ?? "User not found."}</div></>);
 
   const dirty = chips !== null && JSON.stringify(chips) !== JSON.stringify(user.permissions.filter((p: string) => p.startsWith("portal.")));
@@ -649,6 +697,11 @@ function UserDetail() {
           </button>
           <button className="btn" onClick={() => setConfirm({ kind: "signout" })}>Force sign-out</button>
           <button className="btn" onClick={() => setConfirm({ kind: "reset" })}>Reset credentials…</button>
+          <button className="btn danger" disabled={isSelf}
+            title={isSelf ? "You cannot delete your own account" : ""}
+            onClick={() => setConfirm({ kind: "delete" })}>
+            Delete user
+          </button>
         </div>
       </div>
 
@@ -665,7 +718,7 @@ function UserDetail() {
         </div>
         <div className="card">
           <h3>Portal permissions</h3>
-          {isSelf && <div className="banner warn-banner" style={{ background: "var(--warn-soft)", borderColor: "var(--warn)", color: "var(--warn)" }}><Icons.alert /> Policy blocks editing your own permissions.</div>}
+          {isSelf && <div className="banner info"><Icons.alert /> Policy blocks editing your own permissions.</div>}
           <div className="chips" style={{ minHeight: 30, marginBottom: 10 }}>
             {(chips ?? []).map((permission) => (
               <span key={permission} className="chipx">
@@ -681,7 +734,7 @@ function UserDetail() {
           </div>
           {!isSelf && (
             <div className="toolbar" style={{ marginBottom: 0 }}>
-              <select className="input" value="" onChange={(event) => {
+              <select className="input" value={addValue} onChange={(event) => {
                 if (!event.target.value) return;
                 setChips((list) => list!.includes(event.target.value) ? list : [...list!, event.target.value]);
                 setAddValue("");
@@ -699,7 +752,34 @@ function UserDetail() {
         </div>
       </div>
 
-      {confirm && (
+      {confirm?.kind === "delete" && (
+        <Modal title="Delete this user permanently?" onClose={() => setConfirm(null)}>
+          <p>
+            This removes <strong>{user.email}</strong>, their sessions, credentials, permissions,
+            consents, and refresh tokens. Audit entries are preserved. This cannot be undone.
+          </p>
+          <label className="field">
+            <span>Type the account email to confirm</span>
+            <input className="input" placeholder={user.email} value={typedEmail} onChange={(event) => setTypedEmail(event.target.value)} />
+          </label>
+          <div className="toolbar" style={{ marginBottom: 0, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={() => setConfirm(null)}>Cancel</button>
+            <button
+              className="btn danger"
+              disabled={typedEmail.toLowerCase() !== String(user.email).toLowerCase()}
+              onClick={() =>
+                api(`/users/${id}`, { method: "DELETE" })
+                  .then(() => { toast("User deleted."); navigate("/users"); })
+                  .catch((cause: Error) => toast(cause.message, "err"))
+              }
+            >
+              Delete permanently
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {confirm && confirm.kind !== "delete" && (
         <ConfirmDialog
           title={{
             disable: "Disable this account?",
@@ -717,7 +797,7 @@ function UserDetail() {
           danger={confirm.kind === "disable"}
           onClose={() => setConfirm(null)}
           onConfirm={() => {
-            const calls: Record<typeof confirm.kind, Promise<any>> = {
+            const calls: Record<string, Promise<any>> = {
               disable: api(`/users/${id}/disable`, { method: "POST" }),
               enable: api(`/users/${id}/enable`, { method: "POST" }),
               signout: api(`/users/${id}/force-signout`, { method: "POST" }),
@@ -739,30 +819,67 @@ function UserDetail() {
 
 function Apps() {
   const { data, loading, reload } = useApi<{ clients: any[] }>("/clients");
+  const resources = useApi<{ resources: any[] }>("/resources");
   const toast = useToast();
   const [secret, setSecret] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<any | null>(null);
-  const [nameGuess, setNameGuess] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    redirectUris: "https://localhost:5173/auth/callback",
+    public: false,
+    scopes: "openid profile email",
+    resourceAudience: "",
+    requireConsent: true,
+  });
+
+  const registerApp = () =>
+    api("/clients", {
+      method: "POST",
+      body: JSON.stringify({
+        name: form.name.trim(),
+        redirectUris: form.redirectUris.split(/\s*\n\s*/).filter(Boolean),
+        public: form.public,
+        scopes: form.scopes.split(/[\s,]+/).filter(Boolean),
+        resources: [form.resourceAudience],
+        requireConsent: form.requireConsent,
+        filterMode: null,
+        filterContent: [],
+      }),
+    })
+      .then((result: any) => {
+        setCreating(false);
+        if (result.secret) setSecret(result.secret);
+        else toast(`Application ${result.clientId} registered.`);
+        reload();
+      })
+      .catch((cause: Error) => toast(cause.message, "err"));
 
   return (
     <>
-      <Crumbs trail={["Applications"]} />
-      <h1 className="page-title">App registrations</h1>
-      <p className="page-sub">Applications allowed to authenticate against the directory.</p>
+      <Crumbs trail={["App registrations"]} />
+      <div className="page-head">
+        <div className="grow">
+          <h1 className="page-title">App registrations</h1>
+          <p className="page-sub" style={{ marginBottom: 0 }}>Applications allowed to authenticate against the directory.</p>
+        </div>
+        <button className="btn primary" onClick={() => setCreating(true)}><Icons.plus /> New registration</button>
+      </div>
       <div className="card" style={{ padding: 0 }}>
         <div className="tablewrap">
           <table>
-            <thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th style={{ width: 190 }}>Actions</th></tr></thead>
+            <thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th>Consent</th><th style={{ width: 190 }}>Actions</th></tr></thead>
             {loading ? <TableSkeleton /> : (
               <tbody>
                 {(data?.clients ?? []).length === 0
-                  ? <EmptyRow colSpan={5} message="No applications registered." />
+                  ? <EmptyRow colSpan={6} message="No applications registered yet." />
                   : data!.clients.map((client) => (
                     <tr key={client.clientId}>
                       <td><strong>{client.metadata?.name ?? client.clientId}</strong></td>
                       <td className="mono" title={client.clientId}>{client.clientId.slice(0, 13)}…</td>
                       <td><Pill kind={client.metadata?.public ? "off" : "ok"}>{client.metadata?.public ? "public · PKCE" : "confidential"}</Pill></td>
                       <td>{client.metadata?.redirectUris?.length ?? 0}</td>
+                      <td>{client.requireConsent ? <Pill kind="warn">required</Pill> : <Pill kind="ok">silent</Pill>}</td>
                       <td>
                         <div className="toolbar" style={{ margin: 0 }}>
                           <button className="btn ghost" onClick={() =>
@@ -772,7 +889,7 @@ function Apps() {
                           }>
                             <Icons.plus size={13} /> Secret
                           </button>
-                          <button className="btn danger" onClick={() => { setDeleting(client); setNameGuess(""); }}>
+                          <button className="btn danger" onClick={() => setDeleting(client)}>
                             Delete
                           </button>
                         </div>
@@ -785,11 +902,61 @@ function Apps() {
         </div>
       </div>
 
+      {creating && (
+        <Modal title="Register an application" onClose={() => setCreating(false)}>
+          <label className="field">
+            <span>Display name</span>
+            <input className="input" placeholder="Dev Portal" value={form.name}
+              onChange={(event) => setForm((f) => ({ ...f, name: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Redirect URIs (one per line)</span>
+            <textarea className="input" rows={3} value={form.redirectUris}
+              onChange={(event) => setForm((f) => ({ ...f, redirectUris: event.target.value }))} />
+          </label>
+          <div className="checkline">
+            <input id="pub" type="checkbox" checked={form.public}
+              onChange={(event) => setForm((f) => ({ ...f, public: event.target.checked }))} />
+            <label htmlFor="pub">Public client (PKCE only, no secret)</label>
+          </div>
+          <label className="field">
+            <span>Allowed scopes (space separated)</span>
+            <input className="input" value={form.scopes}
+              onChange={(event) => setForm((f) => ({ ...f, scopes: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Resource audience</span>
+            <select className="input" value={form.resourceAudience}
+              onChange={(event) => setForm((f) => ({ ...f, resourceAudience: event.target.value }))}>
+              <option value="">Select a resource…</option>
+              {(resources.data?.resources ?? []).map((resource: any) => (
+                <option key={resource.audience} value={resource.audience}>{resource.audience}</option>
+              ))}
+            </select>
+          </label>
+          <div className="checkline">
+            <input id="consent" type="checkbox" checked={form.requireConsent}
+              onChange={(event) => setForm((f) => ({ ...f, requireConsent: event.target.checked }))} />
+            <label htmlFor="consent">Require user consent on first access</label>
+          </div>
+          <div className="toolbar" style={{ marginBottom: 0, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={() => setCreating(false)}>Cancel</button>
+            <button
+              className="btn primary"
+              disabled={!form.name.trim() || form.redirectUris.trim().length === 0 || !form.resourceAudience}
+              onClick={registerApp}
+            >
+              Register application
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {secret && <SecretModal title="New client secret" secret={secret} onClose={() => { setSecret(null); reload(); }} />}
       {deleting && (
         <ConfirmDialog
           title="Delete application?"
-          message={<>Type the first 8 characters of the client ID (<code className="mono">{deleting.clientId.slice(0, 8)}</code>) to confirm. Authorization data for this app is removed with it.</>}
+          message={<>Authorization data for <strong>{deleting.metadata?.name ?? deleting.clientId}</strong> is removed with it. This cannot be undone.</>}
           confirmLabel="Delete application"
           danger
           onClose={() => setDeleting(null)}
@@ -799,9 +966,6 @@ function Apps() {
               .catch((cause: Error) => { toast(cause.message, "err"); throw cause; })
           }
         />
-      )}
-      {deleting && nameGuess !== deleting.clientId.slice(0, 8) && (
-        <style>{`.backdrop input{display:block;width:100%;margin:10px 0;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)}`}</style>
       )}
     </>
   );
@@ -912,17 +1076,16 @@ function SessionsTokens() {
         <h3 style={{ padding: "14px 16px 0" }}>Active SSO sessions</h3>
         <div className="tablewrap">
           <table>
-            <thead><tr><th>User</th><th>Started</th><th>Expires</th><th>IP</th><th style={{ width: 110 }}>Action</th></tr></thead>
+            <thead><tr><th>User</th><th>Started</th><th>Expires</th><th style={{ width: 110 }}>Action</th></tr></thead>
             {sessions.loading ? <TableSkeleton /> : (
               <tbody>
                 {(sessions.data?.sessions ?? []).length === 0
-                  ? <EmptyRow colSpan={5} message="No active sessions." />
+                  ? <EmptyRow colSpan={4} message="No active sessions." />
                   : sessions.data!.sessions.map((session) => (
                     <tr key={session.id}>
                       <td>{session.email}</td>
                       <td title={fmtDateTime(session.createdAt)}>{relTime(session.createdAt)}</td>
                       <td>{fmtDateTime(session.expiresAt)}</td>
-                      <td className="mono">{session.ip ?? "—"}</td>
                       <td>
                         <button className="btn danger" onClick={() =>
                           api(`/sessions/${session.id}/revoke`, { method: "POST" })
@@ -1241,18 +1404,6 @@ function Shell() {
   }
   if (failed && !location.pathname.startsWith("/auth")) return <Navigate to="/auth/start-sso" replace />;
 
-  const trail: Record<string, string[]> = {
-    "/": ["Overview"],
-    "/users": ["Users"],
-    "/apps": ["App registrations"],
-    "/resources": ["Resource servers"],
-    "/sessions": ["Sessions & tokens"],
-    "/consents": ["Consent grants"],
-    "/signins": ["Sign-in logs"],
-    "/audit": ["Audit logs"],
-    "/settings": ["Portal settings"],
-  };
-
   return (
     <AuthContext.Provider value={{ me, reload: load }}>
       <SearchContext.Provider value={{ query: debouncedQuery || null }}>
@@ -1269,25 +1420,21 @@ function Shell() {
         />
         <div className="shell">
           <Sidebar collapsed={collapsed} />
-          {location.pathname.startsWith("/users/") ? (
-            <main className="content"><UserDetail /></main>
-          ) : (
-            <main className="content">
-              {trail[location.pathname] ? <Crumbs trail={trail[location.pathname]} /> : null}
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/users" element={<Users />} />
-                <Route path="/apps" element={<Apps />} />
-                <Route path="/resources" element={<Resources />} />
-                <Route path="/sessions" element={<SessionsTokens />} />
-                <Route path="/consents" element={<Consents />} />
-                <Route path="/audit" element={<Audit />} />
-                <Route path="/signins" element={<SignIns />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
-          )}
+          <main className="content">
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/users" element={<Users />} />
+              <Route path="/users/:id" element={<UserDetail />} />
+              <Route path="/apps" element={<Apps />} />
+              <Route path="/resources" element={<Resources />} />
+              <Route path="/sessions" element={<SessionsTokens />} />
+              <Route path="/consents" element={<Consents />} />
+              <Route path="/audit" element={<Audit />} />
+              <Route path="/signins" element={<SignIns />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
         </div>
       </SearchContext.Provider>
     </AuthContext.Provider>
