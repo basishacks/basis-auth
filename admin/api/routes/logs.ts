@@ -26,6 +26,8 @@ export function registerLogRoutes(app: AdminApp, deps: RouteDeps) {
     const cursorTs = cursorRaw && Number.isFinite(Number(cursorRaw.split("_")[0]))
       ? new Date(Number(cursorRaw.split("_")[0])).toISOString()
       : null;
+    // Optional text filters carry explicit ::text casts: bare null params in
+    // OR clauses leave Postgres unable to deduce parameter types.
     const result = await db.execute<Record<string, unknown>>(sql`
       select e.id, e.actor_user_id as "actorUserId", a.email as "actorEmail",
              e.action, e.target_type as "targetType", e.target_id as "targetId",
@@ -34,8 +36,8 @@ export function registerLogRoutes(app: AdminApp, deps: RouteDeps) {
       from audit_events e
       left join users a on a.id = e.actor_user_id
       where (${cursorTs}::timestamptz is null or e.created_at < ${cursorTs}::timestamptz)
-        and (${action ?? null} is null or e.action like ${action ? `%${action}%` : null})
-        and (${target ?? null} is null or e.target_id like ${target ? `%${target}%` : null})
+        and (${action ?? null}::text is null or e.action like ${action ? `%${action}%` : null}::text)
+        and (${target ?? null}::text is null or e.target_id like ${target ? `%${target}%` : null}::text)
       order by e.created_at desc
       limit ${PAGE_SIZE + 1}
     `);
@@ -52,15 +54,16 @@ export function registerLogRoutes(app: AdminApp, deps: RouteDeps) {
     const kind = url.searchParams.get("kind")?.trim();
     const clientId = url.searchParams.get("clientId")?.trim();
     const successOnly = url.searchParams.get("success");
+    const successParam = successOnly === null || successOnly === "" ? null : successOnly === "true";
     const result = await db.execute<Record<string, unknown>>(sql`
       select ev.id, ev.user_id as "userId", u.email, ev.kind, ev.provider,
              ev.client_id as "clientId", ev.success, ev.ip::text as ip,
              ev.user_agent as "userAgent", ev.detail, ev.created_at as "createdAt"
       from auth_events ev
       left join users u on u.id = ev.user_id
-      where (${kind ?? null} is null or ev.kind = ${kind ?? null})
-        and (${clientId ?? null} is null or ev.client_id = ${clientId ?? null})
-        and (${successOnly ?? null} is null or ev.success = (${successOnly === "true"}))
+      where (${kind ?? null}::text is null or ev.kind = ${kind ?? null}::text)
+        and (${clientId ?? null}::text is null or ev.client_id = ${clientId ?? null}::text)
+        and (${successParam}::boolean is null or ev.success = (${successParam})::boolean)
       order by ev.created_at desc
       limit ${PAGE_SIZE + 1}
     `);
