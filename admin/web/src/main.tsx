@@ -291,6 +291,8 @@ let reloadGlobal = () => undefined;
 function Shell() {
   const [me, setMe] = useState<Me | null>(null);
   const [failed, setFailed] = useState(false);
+  const location = useLocation();
+  const loginError = new URLSearchParams(location.search).get("error");
   const load = useCallback(() => {
     fetch("/api/me")
       .then(async (response) => {
@@ -303,8 +305,25 @@ function Shell() {
   }, []);
   useEffect(load, [load]);
   reloadGlobal = load;
-  const location = useLocation();
   const links = [["/", "Dashboard"], ["/users", "Users"], ["/apps", "Apps"], ["/resources", "Resources"], ["/sessions", "Sessions"], ["/audit", "Audit"], ["/signins", "Sign-ins"], ["/settings", "Settings"]] as const;
+  // A callback error (e.g. missing portal permissions) must be shown, not
+  // silently retried: retrying would loop forever against a live SSO session.
+  if (loginError) {
+    return (
+      <main style={{ margin: "4rem auto", maxWidth: 520 }}>
+        <div className="card">
+          <h3 className="danger">Sign-in failed</h3>
+          <p>
+            The identity provider returned <code>{loginError}</code>. If this says{" "}
+            <code>forbidden</code>, the account has no portal permissions yet — grant the first
+            administrator with:
+          </p>
+          <pre>npm run admin:grant -- your@email.example portal.admins.manage</pre>
+          <button onClick={() => { window.location.assign("/auth/start-sso"); }}>Try again</button>
+        </div>
+      </main>
+    );
+  }
   if (failed && !location.pathname.startsWith("/auth")) return <Navigate to="/auth/start-sso" replace />;
   return (
     <AuthContext.Provider value={{ me, reload: load }}>
