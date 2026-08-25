@@ -194,7 +194,13 @@ export function createApp(
     return c.redirect(redirectTo, 303);
   };
 
-  app.use("*", secureHeaders());
+  app.use(
+    "*",
+    secureHeaders({
+      strictTransportSecurity:
+        config.environment === "production" ? "max-age=63072000; includeSubDomains" : false,
+    }),
+  );
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   async function currentSession(c: Context) {
@@ -573,6 +579,9 @@ export function createApp(
       const db = hooks.db;
       const fail = async (): Promise<never> => {
         localLoginBackoff.record(email);
+        // Per-IP counter complements the per-account lockout so one address
+        // cannot spray many accounts.
+        callbackFailures.limit("local-login:" + resolveClientIp(c));
         await hooks?.recordAuthEvent?.({
           kind: "sign_in_failure",
           provider: "local",
@@ -721,7 +730,10 @@ export function createApp(
   });
 
   app.onError((error, c) => {
-    console.error("Request failed", error);
+    // Flatten newlines so user-influenced strings cannot forge log entries.
+    const safeLog = (value: unknown) =>
+      String(value).replace(/[\r\n]+/g, " \\n ");
+    console.error("Request failed", safeLog(error instanceof Error ? error.message : error));
     if (error instanceof OAuthError) {
       return c.json(error.toJSON(), error.status as 400);
     }

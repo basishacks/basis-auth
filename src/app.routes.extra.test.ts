@@ -102,7 +102,8 @@ describe("protocol hardening extras", () => {
   });
 
   it("advertises the login prompt and revocation endpoint in discovery", async () => {
-    const metadata = await build().request("/.well-known/openid-configuration").then((r) => r.json());
+    const response = await build().request("/.well-known/openid-configuration");
+    const metadata: any = await response.json();
     expect(metadata.prompt_values_supported).toEqual(["login"]);
     expect(metadata.revocation_endpoint).toContain("/oauth/revoke");
   });
@@ -185,4 +186,5 @@ describe("token endpoint abuse controls", () => {
     expect(expected.length).toBeGreaterThan(30);
   });
 });
+
 
