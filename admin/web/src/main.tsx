@@ -339,7 +339,7 @@ function AccountMenu() {
             )) ?? null}
           </div>
           <hr />
-          <button className="navitem" style={{ width: "100%" }} onClick={() => api("/auth/logout", { method: "POST" }).then(() => window.location.assign("/"))}>
+          <button className="menuitem" onClick={() => api("/auth/logout", { method: "POST" }).then(() => window.location.assign("/"))}>
             <Icons.logout size={15} /> Sign out
           </button>
         </div>
@@ -348,13 +348,9 @@ function AccountMenu() {
   );
 }
 
-function AppBar({ query, setQuery, collapsed, toggleCollapsed }: {
-  query: string; setQuery: (value: string) => void;
-  collapsed: boolean; toggleCollapsed: () => void;
-}) {
+function AppBar({ query, setQuery }: { query: string; setQuery: (value: string) => void }) {
   return (
     <header className="appbar">
-      <button className="iconbtn" onClick={toggleCollapsed} title="Toggle navigation"><Icons.menu size={18} /></button>
       <Link to="/" className="brand" style={{ color: "var(--text)", textDecoration: "none" }}>
         <Icons.shield size={19} /> Basis Admin Center
       </Link>
@@ -1356,7 +1352,6 @@ let reloadGlobal = (): void => undefined;
 function Shell() {
   const [me, setMe] = useState<Me | null>(null);
   const [failed, setFailed] = useState(false);
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("basis-admin-nav") === "collapsed");
   const [query, setQuery] = useState("");
   const location = useLocation();
   const loginError = new URLSearchParams(location.search).get("error");
@@ -1407,19 +1402,9 @@ function Shell() {
   return (
     <AuthContext.Provider value={{ me, reload: load }}>
       <SearchContext.Provider value={{ query: debouncedQuery || null }}>
-        <AppBar
-          query={location.pathname.startsWith("/users") ? query : ""}
-          setQuery={setQuery}
-          collapsed={collapsed}
-          toggleCollapsed={() => {
-            setCollapsed((previous) => {
-              try { localStorage.setItem("basis-admin-nav", previous ? "open" : "collapsed"); } catch {}
-              return !previous;
-            });
-          }}
-        />
+        <AppBar query={location.pathname.startsWith("/users") ? query : ""} setQuery={setQuery} />
         <div className="shell">
-          <Sidebar collapsed={collapsed} />
+          <Sidebar collapsed={false} />
           <main className="content">
             <Routes>
               <Route path="/" element={<Dashboard />} />
