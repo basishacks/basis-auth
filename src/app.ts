@@ -422,8 +422,7 @@ export function createApp(
   app.post("/oauth/logout", logout);
 
   if (config.environment !== "test") {
-    app.use("/assets/*", serveStatic({ root: "./web/dist" }));
-    app.use("/fonts/*", serveStatic({ root: "./web/dist" }));
+    app.use("/*", serveStatic({ root: "./web/dist" }));
   }
   const serveIndex = async (c: Context) => c.html(await readFile("./web/dist/index.html", "utf8"));
   // app.get("/", serveIndex);
