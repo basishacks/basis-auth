@@ -73,6 +73,36 @@ export function createIdentityService(
   async function upsertFromMicrosoft(identity: UpstreamIdentity) {
     const normalizedEmail = identity.email.trim().toLowerCase();
 
+    // Claim pending accounts provisioned for this email (e.g. by
+    // admin:grant) before their first real sign-in. Adoption is limited to
+    // accounts whose email was never verified, so a verified Microsoft or
+    // local account can never be hijacked by an email collision.
+    const [claimable] = await db
+      .select({ id: users.id, emailVerified: users.emailVerified })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalizedEmail}`)
+      .limit(1);
+
+    if (claimable && !claimable.emailVerified) {
+      const [adopted] = await db
+        .update(users)
+        .set({
+          provider: identity.provider,
+          upstreamIssuer: identity.issuer,
+          upstreamSubject: identity.subject,
+          email: normalizedEmail,
+          emailVerified: identity.emailVerified,
+          displayName: identity.displayName,
+          picture: identity.picture?.data,
+          pictureContentType: identity.picture?.contentType,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, claimable.id))
+        .returning({ id: users.id });
+    if (!adopted) throw new Error("Pending account adoption failed");
+      return (await findUser(adopted.id))!;
+    }
+
     // Single-statement upsert; (xmax = 0) is true only for freshly inserted rows.
     const [user] = await db
       .insert(users)
