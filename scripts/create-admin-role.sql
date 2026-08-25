@@ -18,7 +18,7 @@ $$;
 
 GRANT USAGE ON SCHEMA public TO basis_admin;
 
-GRANT SELECT, INSERT, UPDATE ON
+GRANT SELECT, INSERT, UPDATE, DELETE ON
   users,
   user_permissions,
   oidc_clients,
