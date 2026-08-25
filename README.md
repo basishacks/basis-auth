@@ -296,7 +296,13 @@ A separate Entra-style administration portal lives in `admin/` and runs as its o
 - Signed webhook alerts for privilege changes (`ALERT_WEBHOOK_*`).
 - Emergency lockout switch plus optional IP allowlist.
 
-Provision the portal's own client through `OIDC_CLIENTS_JSON` (public client, PKCE, redirect `https://<portal-host>/auth/callback`) and set `ADMIN_CLIENT_ID` accordingly. Grant the first administrator with `BOOTSTRAP_PERMISSION_GRANTS_JSON` (applied once, at account creation). Later grants and revocations happen in the portal itself and stick.
+Provision the portal's own client through `OIDC_CLIENTS_JSON` (public client, PKCE, redirect `https://<portal-host>/auth/callback`) and set `ADMIN_CLIENT_ID` accordingly. Grant the first administrator after their first sign-in (the account row must exist):
+
+```bash
+npm run admin:grant -- your@email.example portal.admins.manage
+```
+
+Later grants and revocations happen in the portal itself and stick. If sign-in bounces back with `forbidden`, this command is the missing step.
 
 ## Security hardening
 
