@@ -33,7 +33,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   settings
 TO basis_admin;
 
-GRANT UPDATE ON refresh_tokens TO basis_admin;
+GRANT UPDATE, DELETE ON refresh_tokens TO basis_admin;
+-- Artifact cleanup for the portal hygiene sweep (read + delete).
+GRANT SELECT, DELETE ON auth_sessions, authorization_requests, authorization_codes, upstream_auth_requests, refresh_tokens TO basis_admin;
 GRANT SELECT, INSERT ON refresh_tokens TO basis_admin;
 
 -- Append-only history tables.
@@ -42,3 +44,5 @@ GRANT SELECT, INSERT ON auth_events TO basis_admin;
 
 -- Sequences backing serial columns.
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO basis_admin;
+
+
