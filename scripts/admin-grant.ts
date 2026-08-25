@@ -30,9 +30,24 @@ try {
     .from(users)
     .where(eq(users.email, email))
     .limit(1);
+
   if (!user) {
-    console.error(`No account found for ${email}. Sign in once through the IdP first, then re-run.`);
-    process.exitCode = 1;
+    // Bootstrap convenience: create an unverified placeholder account bound
+    // to this email. The first Microsoft sign-in claiming that email adopts
+    // the stub (see identity.upsertFromMicrosoft), keeping the grant intact.
+    const userId = crypto.randomUUID();
+    await db.insert(users).values({
+      id: userId,
+      provider: "local",
+      upstreamIssuer: "pending",
+      upstreamSubject: userId,
+      email,
+      emailVerified: false,
+      displayName: null,
+    });
+    await db.insert(userPermissions).values({ userId, permission }).onConflictDoNothing();
+    console.log(`Created pending account for ${email} and granted ${permission}.`);
+    console.log("It will be claimed automatically on the first Microsoft sign-in with that email.");
   } else {
     await db
       .insert(userPermissions)
