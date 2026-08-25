@@ -11,6 +11,7 @@ import {
   targetIsPrivileged,
   writeAudit,
 } from "../context.js";
+import { requireStepUp } from "../middleware.js";
 import type { AppEnv } from "../middleware.js";
 import { sendWebhookAlert } from "../webhook.js";
 
@@ -20,6 +21,7 @@ export interface RouteDeps {
   db: Database;
   resolveClientIp: (c: Context) => string;
   alert?: { url: string; secret: string };
+  stepUpSeconds: number;
 }
 
 type AdminApp = Hono<{ Bindings: Record<string, string>; Variables: AppEnv["Variables"] & { ip?: string } }>;
@@ -113,7 +115,7 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     });
   });
 
-  app.put("/api/users/:userId/permissions", async (c) => {
+  app.put("/api/users/:userId/permissions", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");
     await assertTargetVisible(deps, admin, userId);
@@ -182,7 +184,7 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/users/:userId/disable", async (c) => {
+  app.post("/api/users/:userId/disable", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");
     if (userId === admin.userId) throw new HttpGuardError(403, "self_edit", "You cannot disable your own account");
@@ -198,7 +200,7 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/users/:userId/enable", async (c) => {
+  app.post("/api/users/:userId/enable", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");
     await assertTargetVisible(deps, admin, userId);
@@ -261,7 +263,7 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ userId, tempPassword });
   });
 
-  app.post("/api/users/:userId/credentials/reset", async (c) => {
+  app.post("/api/users/:userId/credentials/reset", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");
     await assertTargetVisible(deps, admin, userId);
@@ -293,7 +295,7 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ tempPassword });
   });
 
-  app.delete("/api/users/:userId", async (c) => {
+  app.delete("/api/users/:userId", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");
     if (userId === admin.userId) throw new HttpGuardError(403, "self_edit", "You cannot delete your own account");
@@ -315,7 +317,7 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/users/:userId/force-signout", async (c) => {
+  app.post("/api/users/:userId/force-signout", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");
     await assertTargetVisible(deps, admin, userId);
@@ -375,3 +377,6 @@ export async function assertTargetVisible(
     );
   }
 }
+
+
+
