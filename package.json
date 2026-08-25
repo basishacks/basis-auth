@@ -10,7 +10,7 @@
     "esbuild": "0.28.1"
   },
   "scripts": {
-    "dev": "npm run build:web && concurrently --kill-others-on-fail -n auth,client,admin \"npm run dev:auth\" \"npm run dev:client\" \"npm run dev:admin\"",
+    "dev": "npm run build:web && concurrently --kill-others-on-fail -n auth,client,admin \"node node_modules/tsx/dist/cli.mjs watch src/index.ts\" \"node node_modules/vite/bin/vite.js build --watch --config web/vite.config.ts\" \"node node_modules/tsx/dist/cli.mjs watch admin/index.ts\"",
     "dev:admin": "tsx watch admin/index.ts",
     "dev:auth": "tsx watch src/index.ts",
     "dev:client": "vite build --watch --config web/vite.config.ts",
@@ -18,7 +18,8 @@
     "build": "npm run build:web && npm run build:web:admin && tsc -p tsconfig.build.json",
     "build:web": "vite build --config web/vite.config.ts",
     "build:web:admin": "vite build --config admin/web/vite.config.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
+    "start:admin": "node dist/admin/index.js",
     "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
