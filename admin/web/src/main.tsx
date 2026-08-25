@@ -273,7 +273,10 @@ const NAV: Array<{ group: string; items: Array<[string, string, (p: IconProps) =
   { group: "Favorites", items: [["/", "Home", Icons.home]] },
   {
     group: "Identity",
-    items: [["/users", "Users", Icons.users]],
+    items: [
+      ["/users", "Users", Icons.users],
+      ["/roles", "Roles & admins", Icons.key],
+    ],
   },
   {
     group: "Applications",
@@ -356,7 +359,16 @@ function AppBar({ query, setQuery }: { query: string; setQuery: (value: string) 
       </Link>
       <div className="search">
         <Icons.search size={14} />
-        <input placeholder="Search users…" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input
+          placeholder="Search users, then press Enter"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && query.trim()) {
+              window.location.assign(`/users?q=${encodeURIComponent(query.trim())}`);
+            }
+          }}
+        />
       </div>
       <div className="spacer" />
       <ThemeToggle />
@@ -553,6 +565,35 @@ function Users() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ email: "", displayName: "" });
   const [secret, setSecret] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSelected = (id: string) =>
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const runBulk = (action: "disable" | "enable" | "signout") => {
+    const ids = [...selected];
+    let done = 0;
+    void ids
+      .reduce(
+        (chain, id) =>
+          chain.then(() =>
+            api(`/users/${id}/${action === "signout" ? "force-signout" : action}`, { method: "POST" })
+              .then(() => {
+                done += 1;
+              })
+              .catch(() => undefined),
+          ),
+        Promise.resolve(),
+      )
+      .then(() => {
+        toast(`${done} of ${ids.length} operation(s) completed.`);
+        setSelected(new Set());
+        reload();
+      });
+  };
 
   const createUser = () =>
     api("/users/local", { method: "POST", body: JSON.stringify(form) })
@@ -580,16 +621,43 @@ function Users() {
         <div className="grow" />
         <span className="muted">{data?.users.length ?? 0} shown</span>
       </div>
+      {selected.size > 0 && (
+        <div className="card" style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 16px" }}>
+          <strong>{selected.size} selected</strong>
+          <div className="grow" />
+          <button className="btn" onClick={() => runBulk("disable")}>Disable selected</button>
+          <button className="btn" onClick={() => runBulk("enable")}>Enable selected</button>
+          <button className="btn" onClick={() => runBulk("signout")}>Force sign-out selected</button>
+          <button className="btn ghost" onClick={() => setSelected(new Set())}>Clear</button>
+        </div>
+      )}
       <div className="card" style={{ padding: 0 }}>
         <div className="tablewrap">
           <table>
-            <thead><tr><th>User</th><th>Name</th><th>Provider</th><th>Status</th><th>Created</th></tr></thead>
+            <thead><tr>
+              <th style={{ width: 36 }}>
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  checked={(data?.users ?? []).length > 0 && data!.users.every((u) => selected.has(u.id))}
+                  onChange={(event) =>
+                    setSelected(event.target.checked ? new Set((data?.users ?? []).map((u) => u.id)) : new Set())
+                  }
+                />
+              </th>
+              <th>User</th><th>Name</th><th>Provider</th><th>Status</th><th>Created</th>
+            </tr></thead>
             {loading ? <TableSkeleton /> : (
               <tbody>
                 {(data?.users ?? []).length === 0
                   ? <EmptyRow colSpan={5} message="No accounts match this filter." />
                   : data!.users.map((user) => (
                     <tr key={user.id} className="clickable" onClick={() => navigate(`/users/${user.id}`)}>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <input type="checkbox" aria-label={`Select ${user.email}`}
+                          checked={selected.has(user.id)}
+                          onChange={() => toggleSelected(user.id)} />
+                      </td>
                       <td>
                         <div className="usercell">
                           <span className="avatar">{initials(user.displayName, user.email)}</span>
@@ -664,6 +732,14 @@ function UserDetail() {
 
   const dirty = chips !== null && JSON.stringify(chips) !== JSON.stringify(user.permissions.filter((p: string) => p.startsWith("portal.")));
   const isSelf = user.id === me?.userId;
+  const [tab, setTab] = useState<"overview" | "authentication" | "sessions" | "roles">("overview");
+  const sessions = useApi<{ sessions: any[] }>(id && tab === "sessions" ? `/users/${id}/sessions` : null);
+  const [mfaConfirm, setMfaConfirm] = useState(false);
+
+  const tabs: Array<[typeof tab, string]> = [
+    ["overview", "Overview"], ["authentication", "Authentication methods"],
+    ["sessions", "Sessions"], ["roles", "Assigned roles"],
+  ];
 
   const savePermissions = () =>
     api(`/users/${id}/permissions`, { method: "PUT", body: JSON.stringify({ permissions: chips }) })
@@ -701,6 +777,18 @@ function UserDetail() {
         </div>
       </div>
 
+      <div className="toolbar" style={{ borderBottom: "1px solid var(--border)", borderRadius: 0, marginBottom: 18, gap: 4 }}>
+        {([["overview", "Overview"], ["authentication", "Authentication methods"], ["sessions", "Sessions"], ["roles", "Assigned roles"]] as const).map(([key, label]) => (
+          <button key={key} className="btn ghost" onClick={() => setTab(key)}
+            style={tab === key
+              ? { background: "var(--accent-soft)", color: "var(--accent-text)", fontWeight: 600 }
+              : { color: "var(--muted)" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "overview" && (
       <div className="two-col">
         <div className="card">
           <h3>Profile</h3>
@@ -713,7 +801,80 @@ function UserDetail() {
           </dl>
         </div>
         <div className="card">
-          <h3>Portal permissions</h3>
+          <h3>Quick actions</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch" }}>
+            <button className="btn" disabled={isSelf} title={isSelf ? "You cannot change your own account state" : ""}
+              onClick={() => setConfirm({ kind: user.disabled ? "enable" : "disable" })}>
+              {user.disabled ? "Enable account" : "Disable account"}
+            </button>
+            <button className="btn" onClick={() => setConfirm({ kind: "signout" })}>Force sign-out everywhere</button>
+            <button className="btn" onClick={() => setConfirm({ kind: "reset" })}>Reset local credentials…</button>
+            <button className="btn danger" disabled={isSelf} onClick={() => setConfirm({ kind: "delete" })}>Delete this user…</button>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {tab === "authentication" && (
+        <>
+          <div className="card">
+            <h3>Password</h3>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Local accounts sign in with a password; Microsoft-only accounts authenticate upstream.
+              Resetting generates a show-once temporary password and clears MFA factors.
+            </p>
+            <button className="btn" onClick={() => setConfirm({ kind: "reset" })}>Reset local credentials…</button>
+          </div>
+          <div className="card">
+            <h3>Multi-factor authentication (TOTP)</h3>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Removes the authenticator enrollment and all unused recovery codes. The user can
+              re-enroll afterwards.
+            </p>
+            {!isSelf ? (
+              <button className="btn danger" onClick={() => setMfaConfirm(true)}>Remove MFA factors</button>
+            ) : (
+              <p className="muted" style={{ marginBottom: 0 }}>Use another administrator to reset your own factors.</p>
+            )}
+          </div>
+        </>
+      )}
+
+      {tab === "sessions" && (
+        <div className="card" style={{ padding: 0 }}>
+          <div className="tablewrap">
+            <table>
+              <thead><tr><th>Authenticated</th><th>Created</th><th>Expires</th><th style={{ width: 110 }}>Action</th></tr></thead>
+              {sessions.loading ? <TableSkeleton /> : (
+                <tbody>
+                  {(sessions.data?.sessions ?? []).length === 0
+                    ? <EmptyRow colSpan={4} message="No active sessions for this account." />
+                    : sessions.data!.sessions.map((session) => (
+                      <tr key={session.id}>
+                        <td title={fmtDateTime(session.authenticatedAt)}>{relTime(session.authenticatedAt)}</td>
+                        <td>{fmtDateTime(session.createdAt)}</td>
+                        <td>{fmtDateTime(session.expiresAt)}</td>
+                        <td>
+                          <button className="btn danger" onClick={() =>
+                            api(`/sessions/${session.id}/revoke`, { method: "POST" })
+                              .then(() => { toast("Session revoked."); sessions.reload(); })
+                              .catch((cause: Error) => toast(cause.message, "err"))
+                          }>
+                            Revoke
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "roles" && (
+        <div className="card">
+          <h3>Assigned portal roles</h3>
           {isSelf && <div className="banner info"><Icons.alert /> Policy blocks editing your own permissions.</div>}
           <div className="chips" style={{ minHeight: 30, marginBottom: 10 }}>
             {(chips ?? []).map((permission) => (
@@ -746,7 +907,22 @@ function UserDetail() {
             </div>
           )}
         </div>
-      </div>
+      )}
+
+      {mfaConfirm && (
+        <ConfirmDialog
+          title="Remove MFA factors?"
+          message={<>The authenticator enrollment and all recovery codes for <strong>{user.email}</strong> will be deleted. The user can re-enroll afterwards.</>}
+          confirmLabel="Remove factors"
+          danger
+          onClose={() => setMfaConfirm(false)}
+          onConfirm={() =>
+            api(`/users/${id}/mfa/reset`, { method: "POST" })
+              .then(() => toast("MFA factors removed."))
+              .catch((cause: Error) => { toast(cause.message, "err"); throw cause; })
+          }
+        />
+      )}
 
       {confirm?.kind === "delete" && (
         <Modal title="Delete this user permanently?" onClose={() => setConfirm(null)}>
@@ -871,7 +1047,7 @@ function Apps() {
                   ? <EmptyRow colSpan={6} message="No applications registered yet." />
                   : data!.clients.map((client) => (
                     <tr key={client.clientId}>
-                      <td><strong>{client.metadata?.name ?? client.clientId}</strong></td>
+                      <td><strong><Link to={`/apps/${client.clientId}`}>{client.metadata?.name ?? client.clientId}</Link></strong></td>
                       <td className="mono" title={client.clientId}>{client.clientId.slice(0, 13)}…</td>
                       <td><Pill kind={client.metadata?.public ? "off" : "ok"}>{client.metadata?.public ? "public · PKCE" : "confidential"}</Pill></td>
                       <td>{client.metadata?.redirectUris?.length ?? 0}</td>
@@ -1134,6 +1310,245 @@ function SessionsTokens() {
 }
 
 // ---------------------------------------------------------------------------
+// App detail — properties, secrets, branding (Entra enterprise-app style)
+// ---------------------------------------------------------------------------
+
+function AppDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const { data, loading, error, reload } = useApi<{ client: any; secrets: any[] }>(id ? `/clients/${id}` : null);
+  const [form, setForm] = useState<{ name: string; redirectUris: string; scopes: string; requireConsent: boolean; filterMode: "whitelist" | "blacklist" | null; filterContent: string } | null>(null);
+  const [secret, setSecret] = useState<string | null>(null);
+  const [deletingSecret, setDeletingSecret] = useState<any | null>(null);
+  const fileInputId = `logo-${id}`;
+
+  useEffect(() => {
+    const client = data?.client;
+    if (!client || form) return;
+    setForm({
+      name: client.metadata?.name ?? "",
+      redirectUris: (client.metadata?.redirectUris ?? []).join("\n"),
+      scopes: (client.metadata?.scopes ?? []).join(" "),
+      requireConsent: Boolean(client.requireConsent),
+      filterMode: client.filterMode ?? null,
+      filterContent: (client.filterContent ?? []).join(", "),
+    });
+  }, [data, form]);
+
+  if (loading) return (<><Crumbs trail={["App registrations", "Loading…"]} /><div className="card"><div className="skel" /><div className="skel" style={{ width: "60%" }} /></div></>);
+  if (error || !data?.client) return (<><Crumbs trail={["App registrations"]} /><div className="banner locked"><Icons.alert /> {error ?? "Application not found."}</div></>);
+
+  const client = data.client;
+  const dirty = form !== null && (
+    form.name !== (client.metadata?.name ?? "") ||
+    form.redirectUris !== (client.metadata?.redirectUris ?? []).join("\n") ||
+    form.scopes !== (client.metadata?.scopes ?? []).join(" ") ||
+    form.requireConsent !== Boolean(client.requireConsent) ||
+    (form.filterMode ?? null) !== (client.filterMode ?? null) ||
+    form.filterContent !== (client.filterContent ?? []).join(", ")
+  );
+
+  return (
+    <>
+      <Crumbs trail={["App registrations", client.metadata?.name ?? client.clientId]} />
+      <div className="card" style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+        <img src={`/api/clients/${client.clientId}/logo`} alt="" width={64} height={64}
+          style={{ borderRadius: 12, border: "1px solid var(--border)", objectFit: "contain", background: "var(--bg)" }}
+          onError={(event) => { (event.target as HTMLImageElement).style.display = "none"; }} />
+        <div style={{ minWidth: 200 }}>
+          <h1 className="page-title" style={{ marginBottom: 2 }}>{client.metadata?.name ?? client.clientId}</h1>
+          <div className="muted mono">{client.clientId}</div>
+          <div className="chips" style={{ marginTop: 8 }}>
+            <Pill kind={client.metadata?.public ? "off" : "ok"}>{client.metadata?.public ? "public · PKCE" : "confidential"}</Pill>
+            {client.requireConsent ? <Pill kind="warn">consent required</Pill> : <Pill kind="ok">silent consent</Pill>}
+          </div>
+        </div>
+        <div className="grow" />
+        <button className="btn primary" onClick={() => api(`/clients/${client.clientId}/secrets`, { method: "POST", body: JSON.stringify({ name: `secret-${new Date().toISOString().slice(0, 10)}` }) })
+          .then((result: any) => setSecret(result.secret))
+          .catch((cause: Error) => toast(cause.message, "err"))}>
+          <Icons.plus /> New secret
+        </button>
+      </div>
+
+      <div className="card">
+        <h3>Properties</h3>
+        {form && (
+          <>
+            <label className="field"><span>Display name</span>
+              <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+            <label className="field"><span>Redirect URIs (one per line)</span>
+              <textarea className="input" rows={3} value={form.redirectUris} onChange={(e) => setForm({ ...form, redirectUris: e.target.value })} /></label>
+            <label className="field"><span>Allowed scopes (space separated)</span>
+              <input className="input" value={form.scopes} onChange={(e) => setForm({ ...form, scopes: e.target.value })} /></label>
+            <div className="checkline">
+              <input id="rc" type="checkbox" checked={form.requireConsent} onChange={(e) => setForm({ ...form, requireConsent: e.target.checked })} />
+              <label htmlFor="rc">Require user consent on first access</label>
+            </div>
+            <label className="field"><span>Email restriction</span>
+              <select className="input" value={form.filterMode ?? ""} onChange={(e) => setForm({ ...form, filterMode: (e.target.value || null) as any })}>
+                <option value="">No restriction</option>
+                <option value="whitelist">Whitelist only these emails</option>
+                <option value="blacklist">Block these emails</option>
+              </select>
+            </label>
+            {(form.filterMode ?? null) !== null && (
+              <label className="field"><span>Restricted emails (comma separated)</span>
+                <input className="input" value={form.filterContent} onChange={(e) => setForm({ ...form, filterContent: e.target.value })} /></label>
+            )}
+            <div className="toolbar" style={{ marginBottom: 0, justifyContent: "flex-end" }}>
+              <button className="btn ghost" disabled={!dirty} onClick={() => setForm(null)}>Discard</button>
+              <button className="btn primary" disabled={!dirty} onClick={() =>
+                api(`/clients/${client.clientId}`, {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    name: form!.name.trim(),
+                    redirectUris: form!.redirectUris.split(/\s*\n\s*/).filter(Boolean),
+                    scopes: form!.scopes.split(/[\s,]+/).filter(Boolean),
+                    requireConsent: form!.requireConsent,
+                    filterMode: form!.filterMode,
+                    filterContent: form!.filterContent.split(/[\s,]+/).filter(Boolean),
+                  }),
+                }).then(() => { toast("Properties saved."); reload(); })
+                  .catch((cause: Error) => toast(cause.message, "err"))
+              }>Save properties</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {!client.metadata?.public && (
+        <div className="card" style={{ padding: 0 }}>
+          <h3 style={{ padding: "16px 18px 0" }}>Secrets</h3>
+          <div className="tablewrap">
+            <table>
+              <thead><tr><th>Name</th><th>Created</th><th>Expires</th><th>Last used</th><th>Status</th><th style={{ width: 110 }}>Action</th></tr></thead>
+              <tbody>
+                {(data.secrets ?? []).length === 0
+                  ? <EmptyRow colSpan={6} message="No secrets issued." />
+                  : data.secrets.map((s: any) => (
+                    <tr key={s.id}>
+                      <td>{s.name}</td>
+                      <td title={fmtDateTime(s.createdAt)}>{fmtDate(s.createdAt)}</td>
+                      <td>{s.expiresAt ? fmtDate(s.expiresAt) : "never expires"}</td>
+                      <td>{s.lastUsedAt ? relTime(s.lastUsedAt) : "never"}</td>
+                      <td>{s.revokedAt ? <Pill kind="bad">revoked</Pill> : s.expiresAt && new Date(s.expiresAt) < new Date() ? <Pill kind="warn">expired</Pill> : <Pill kind="ok">active</Pill>}</td>
+                      <td>
+                        {!s.revokedAt && (
+                          <button className="btn danger" onClick={() => setDeletingSecret(s)}>Revoke</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <h3>Branding — logo</h3>
+        <p className="muted" style={{ marginTop: 0 }}>Shown on the consent screen. PNG, JPEG, WebP or SVG up to 512 KB.</p>
+        <label className="btn" htmlFor={fileInputId} style={{ cursor: "pointer" }}>
+          Upload logo
+          <input id={fileInputId} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style={{ display: "none" }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              if (file.size > 512 * 1024) { toast("Logo must be 512 KB or smaller.", "err"); return; }
+              const reader = new FileReader();
+              reader.onload = () =>
+                api(`/clients/${client.clientId}/logo`, {
+                  method: "PUT",
+                  body: JSON.stringify({ data: String(reader.result).split(",")[1] ?? "", contentType: file.type }),
+                }).then(() => { toast("Logo updated."); reload(); })
+                  .catch((cause: Error) => toast(cause.message, "err"));
+              reader.readAsDataURL(file);
+            }} />
+        </label>
+      </div>
+
+      <div className="card">
+        <h3>Danger zone</h3>
+        <button className="btn danger" onClick={() =>
+          api(`/clients/${client.clientId}`, { method: "DELETE" })
+            .then(() => { toast("Application deleted."); navigate("/apps"); })
+            .catch((cause: Error) => toast(cause.message, "err"))
+        }>
+          Delete this application
+        </button>
+      </div>
+
+      {secret && <SecretModal title="New client secret" secret={secret} onClose={() => { setSecret(null); reload(); }} />}
+      {deletingSecret && (
+        <ConfirmDialog
+          title={`Revoke "${deletingSecret.name}"?`}
+          message={<>Applications using this secret will immediately lose the ability to exchange codes and refresh tokens.</>}
+          confirmLabel="Revoke secret"
+          danger
+          onClose={() => setDeletingSecret(null)}
+          onConfirm={() =>
+            api(`/clients/${client.clientId}/secrets/${deletingSecret.id}`, { method: "DELETE" })
+              .then(() => { toast("Secret revoked."); reload(); })
+              .catch((cause: Error) => { toast(cause.message, "err"); throw cause; })
+          }
+        />
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Roles & administrators
+// ---------------------------------------------------------------------------
+
+function RolesAdmins() {
+  const { data, loading } = useApi<{ assignments: any[] }>("/roles/admins");
+  const grouped = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const assignment of data?.assignments ?? []) {
+      map.set(assignment.permission, [...(map.get(assignment.permission) ?? []), assignment]);
+    }
+    return map;
+  }, [data]);
+
+  return (
+    <>
+      <Crumbs trail={["Roles & admins"]} />
+      <h1 className="page-title">Roles &amp; administrators</h1>
+      <p className="page-sub">Every account holding portal permissions, grouped by role.</p>
+      {loading ? (
+        <div className="card"><div className="skel" /><div className="skel" style={{ width: "70%" }} /></div>
+      ) : (
+        [...grouped.entries()].map(([permission, members]) => (
+          <div className="card" key={permission} style={{ padding: 0 }}>
+            <h3 style={{ padding: "14px 18px 0" }}><span className="chipx">{permission}</span> · {members.length}</h3>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>User</th><th>Name</th><th>Status</th></tr></thead>
+                <tbody>
+                  {members.map((member: any) => (
+                    <tr key={`${member.userId}:${member.permission}`}>
+                      <td><Link to={`/users/${member.userId}`}>{member.email}</Link></td>
+                      <td>{member.displayName ?? "—"}</td>
+                      <td>{member.disabled ? <Pill kind="bad">disabled</Pill> : <Pill kind="ok">active</Pill>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))
+      )}
+      {!loading && grouped.size === 0 && (
+        <div className="card"><EmptyRow colSpan={1} message="Nobody holds portal permissions yet. Use npm run admin:grant to bootstrap the first administrator." /></div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Consents
 // ---------------------------------------------------------------------------
 
@@ -1189,8 +1604,12 @@ function Consents() {
 
 function Audit() {
   const [action, setAction] = useState("");
-  const filter = action ? `?action=${encodeURIComponent(action)}` : "";
-  const { data, loading, error } = useApi<{ events: any[]; nextCursor: string | null }>(`/audit${filter}`);
+  const [target, setTarget] = useState("");
+  const params = new URLSearchParams();
+  if (action) params.set("action", action);
+  if (target) params.set("target", target);
+  const qs = params.toString();
+  const { data, loading, error } = useApi<{ events: any[]; nextCursor: string | null }>(`/audit${qs ? `?${qs}` : ""}`);
 
   return (
     <>
@@ -1198,7 +1617,10 @@ function Audit() {
       <h1 className="page-title">Audit logs</h1>
       <p className="page-sub">Append-only record of every administrator action. Entries cannot be edited or deleted.</p>
       <div className="toolbar">
-        <input className="input" placeholder="Filter by action…" style={{ width: 260 }} value={action} onChange={(event) => setAction(event.target.value)} />
+        <input className="input" placeholder="Filter by action…" style={{ width: 240 }} value={action} onChange={(event) => setAction(event.target.value)} />
+        <input className="input" placeholder="Filter by target ID…" style={{ width: 240 }} value={target} onChange={(event) => setTarget(event.target.value)} />
+        <div className="grow" />
+        <span className="muted">{data?.events.length ?? 0} shown</span>
       </div>
       <div className="card" style={{ padding: 0 }}>
         <div className="tablewrap">
@@ -1228,12 +1650,35 @@ function Audit() {
 }
 
 function SignIns() {
-  const { data, loading } = useApi<{ events: any[] }>("/signins");
+  const [kind, setKind] = useState("");
+  const [result, setResult] = useState("");
+  const params = new URLSearchParams();
+  if (kind) params.set("kind", kind);
+  if (result) params.set("success", result);
+  const qs = params.toString();
+  const { data, loading } = useApi<{ events: any[] }>(`/signins${qs ? `?${qs}` : ""}`);
   return (
     <>
       <Crumbs trail={["Sign-in logs"]} />
       <h1 className="page-title">Sign-in logs</h1>
       <p className="page-sub">Every authentication attempt against the directory.</p>
+      <div className="toolbar">
+        <select className="input" value={kind} onChange={(event) => setKind(event.target.value)}>
+          <option value="">All event types</option>
+          <option value="sign_in">Sign-ins</option>
+          <option value="token_issued">Tokens issued</option>
+          <option value="token_refreshed">Tokens refreshed</option>
+          <option value="token_refresh_rejected">Refresh rejections</option>
+          <option value="logout">Logouts</option>
+        </select>
+        <select className="input" value={result} onChange={(event) => setResult(event.target.value)}>
+          <option value="">All results</option>
+          <option value="true">Success only</option>
+          <option value="false">Failures only</option>
+        </select>
+        <div className="grow" />
+        <span className="muted">{data?.events.length ?? 0} shown</span>
+      </div>
       <div className="card" style={{ padding: 0 }}>
         <div className="tablewrap">
           <table>
@@ -1267,22 +1712,18 @@ function SignIns() {
 
 function Settings() {
   const { me } = useAuth();
+  const lockout = useApi<{ locked: boolean }>("/settings/lockout");
   const toast = useToast();
-  const [locked, setLocked] = useState<boolean | null>(null);
+  const [lockedOverride, setLockedOverride] = useState<boolean | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
-
-  // The lockout switch lives in settings; read through dashboard summary by
-  // asking the server indirectly: reuse summary endpoint's absence of an
-  // explicit field, so poll via a tiny dedicated fetch of the audit feed.
-  // Simpler: derive from a HEAD-like probe is overkill — expose via /api/me
-  // is wrong too; keep the authoritative source: attempt PUT only when needed
-  // and reflect the last known value from the toggle action itself.
   useEffect(() => { document.title = "Basis Admin Center"; }, []);
+
+  const locked = lockedOverride ?? lockout.data?.locked ?? false;
 
   const toggle = (target: boolean) =>
     api("/settings/lockout", { method: "PUT", body: JSON.stringify({ locked: target, confirm: "LOCK" }) })
-      .then(() => { setLocked(target); toast(target ? "Portal locked." : "Portal unlocked."); });
+      .then(() => { lockout.reload(); setLockedOverride(target); toast(target ? "Portal locked." : "Portal unlocked."); });
 
   return (
     <>
@@ -1293,7 +1734,7 @@ function Settings() {
       <div className={cls("banner", locked === true && "locked")}>
         <Icons.alert />
         <div style={{ flex: 1 }}>
-          <strong>{locked === true ? "The portal is LOCKED." : "Portal lockout is available."}</strong>
+          <strong>{locked ? "The portal is LOCKED." : "Portal lockout is available."}</strong>
           <div className="muted">
             Locking rejects every portal API call for all administrators until unlocked.
             Requires fresh re-authentication (step-up) and typed confirmation.
@@ -1410,7 +1851,9 @@ function Shell() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/users" element={<Users />} />
               <Route path="/users/:id" element={<UserDetail />} />
+              <Route path="/roles" element={<RolesAdmins />} />
               <Route path="/apps" element={<Apps />} />
+              <Route path="/apps/:id" element={<AppDetail />} />
               <Route path="/resources" element={<Resources />} />
               <Route path="/sessions" element={<SessionsTokens />} />
               <Route path="/consents" element={<Consents />} />
@@ -1475,3 +1918,7 @@ function App() {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+
+
+

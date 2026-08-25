@@ -317,6 +317,51 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ ok: true });
   });
 
+  app.get("/api/users/:userId/sessions", async (c) => {
+    const admin = c.get("admin");
+    const userId = c.req.param("userId");
+    await assertTargetVisible(deps, admin, userId);
+    const rows = await db
+      .select({
+        idHash: authSessions.idHash,
+        createdAt: authSessions.createdAt,
+        authenticatedAt: authSessions.authenticatedAt,
+        expiresAt: authSessions.expiresAt,
+      })
+      .from(authSessions)
+      .where(eq(authSessions.userId, userId))
+      .orderBy(desc(authSessions.createdAt));
+    return c.json({
+      sessions: rows.map((row) => ({
+        id: `a_${row.idHash.slice(0, 12)}`,
+        createdAt: row.createdAt,
+        authenticatedAt: row.authenticatedAt,
+        expiresAt: row.expiresAt,
+      })),
+    });
+  });
+
+  // Removes TOTP enrollment and recovery codes without touching passwords.
+  app.post("/api/users/:userId/mfa/reset", requireStepUp(deps.stepUpSeconds), async (c) => {
+    const admin = c.get("admin");
+    const userId = c.req.param("userId");
+    await assertTargetVisible(deps, admin, userId);
+    const cleared = await db
+      .update(localCredentials)
+      .set({ totpConfirmedAt: null, totpSecretEnc: null, recoveryCodes: [] })
+      .where(eq(localCredentials.userId, userId))
+      .returning({ userId: localCredentials.userId });
+    if (!cleared.length) throw new HttpGuardError(404, "not_found", "This account has no local credentials");
+    await writeAudit(db, {
+      actorUserId: admin.userId,
+      action: "portal.user.mfa_reset",
+      targetType: "user",
+      targetId: userId,
+      ...auditContext(c),
+    });
+    return c.json({ ok: true });
+  });
+
   app.post("/api/users/:userId/force-signout", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");

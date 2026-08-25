@@ -27,6 +27,8 @@ import { registerResourceRoutes } from "./routes/resources.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerLogRoutes } from "./routes/logs.js";
 import { registerDashboardRoutes } from "./routes/dashboard.js";
+import { registerRolesRoutes } from "./routes/roles.js";
+import { registerSettingsRoutes } from "./routes/settings.js";
 
 const SESSION_COOKIE = "basis_admin_session";
 const BRIDGE_COOKIE = "basis_admin_bridge";
@@ -75,6 +77,8 @@ export function createAdminApp(config: AdminConfig, db: Database) {
   registerSessionRoutes(app, routeDeps);
   registerLogRoutes(app, routeDeps);
   registerDashboardRoutes(app, routeDeps);
+  registerRolesRoutes(app, routeDeps);
+  registerSettingsRoutes(app, routeDeps);
 
   app.get("/auth/start", async (c) => {
     try {

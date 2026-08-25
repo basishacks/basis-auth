@@ -63,6 +63,25 @@ export function registerClientRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ clients: rows });
   });
 
+  app.get("/api/clients/:clientId", async (c) => {
+    const clientId = c.req.param("clientId");
+    const [client] = await db.select().from(oidcClients).where(eq(oidcClients.clientId, clientId)).limit(1);
+    if (!client) throw new HttpGuardError(404, "not_found", "Application not found");
+    const secrets = await db
+      .select({
+        id: clientSecrets.id,
+        name: clientSecrets.name,
+        createdAt: clientSecrets.createdAt,
+        expiresAt: clientSecrets.expiresAt,
+        lastUsedAt: clientSecrets.lastUsedAt,
+        revokedAt: clientSecrets.revokedAt,
+      })
+      .from(clientSecrets)
+      .where(eq(clientSecrets.clientId, clientId))
+      .orderBy(asc(clientSecrets.createdAt));
+    return c.json({ client, secrets });
+  });
+
   app.post("/api/clients", async (c) => {
     const admin = c.get("admin");
     const parsed = clientInputSchema.safeParse(await c.req.json().catch(() => undefined));
