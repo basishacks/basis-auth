@@ -54,11 +54,20 @@ export function createAdminApp(config: AdminConfig, db: Database) {
 
   app.use("*", createIpAllowlistMiddleware(config.ipAllowlist, resolveClientIp));
   app.use("/api/*", createLockoutMiddleware(db));
+  // Global perimeter for every API route: an authenticated administrator
+  // session, and CSRF proof on anything that mutates state. Routes must not
+  // rely on registering these themselves.
+  app.use("/api/*", requireSession(auth, sessionCookieName));
+  app.use("/api/*", async (c, next) => {
+    if (c.req.method === "GET" || c.req.method === "HEAD") return next();
+    return requireCsrf(cookieSecret)(c, next);
+  });
 
   const routeDeps = {
     db,
     resolveClientIp,
     alert: config.alertWebhook,
+    stepUpSeconds: config.stepUpMaxAgeSeconds,
   };
   registerUserRoutes(app, routeDeps);
   registerClientRoutes(app, routeDeps);
