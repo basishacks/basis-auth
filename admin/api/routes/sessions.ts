@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Database } from "../../../src/database/client.js";
 import { authSessions, authorizationConsents, refreshTokens } from "../../../src/database/schema.js";
 import { HttpGuardError, writeAudit } from "../context.js";
+import { requireStepUp } from "../middleware.js";
 import type { AppEnv } from "../middleware.js";
 
 type AdminApp = Hono<{ Bindings: Record<string, string>; Variables: AppEnv["Variables"] & { ip?: string } }>;
@@ -12,6 +13,7 @@ export interface RouteDeps {
   db: Database;
   resolveClientIp: (c: Context) => string;
   alert?: { url: string; secret: string };
+  stepUpSeconds: number;
 }
 
 function auditMeta(c: Context<{ Bindings: Record<string, string>; Variables: AppEnv["Variables"] & { ip?: string } }>) {
@@ -43,7 +45,7 @@ export function registerSessionRoutes(app: AdminApp, deps: RouteDeps) {
     });
   });
 
-  app.post("/api/sessions/:idHash/revoke", async (c) => {
+  app.post("/api/sessions/:idHash/revoke", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const idHash = c.req.param("idHash");
     // Only SSO session hashes are revocable through this route; the prefix
@@ -79,7 +81,7 @@ export function registerSessionRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ tokens: result.rows });
   });
 
-  app.post("/api/tokens/family/:familyId/revoke", async (c) => {
+  app.post("/api/tokens/family/:familyId/revoke", requireStepUp(deps.stepUpSeconds), async (c) => {
     const admin = c.get("admin");
     const familyId = c.req.param("familyId");
     const revoked = await db
@@ -131,3 +133,6 @@ export function registerSessionRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ ok: true });
   });
 }
+
+
+
