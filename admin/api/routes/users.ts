@@ -293,6 +293,28 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
     return c.json({ tempPassword });
   });
 
+  app.delete("/api/users/:userId", async (c) => {
+    const admin = c.get("admin");
+    const userId = c.req.param("userId");
+    if (userId === admin.userId) throw new HttpGuardError(403, "self_edit", "You cannot delete your own account");
+    await assertTargetVisible(deps, admin, userId);
+    // FK cascades remove sessions, credentials, permissions, consents, and
+    // token families; audit rows keep their actor via ON DELETE SET NULL.
+    const deleted = await db
+      .delete(users)
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+    if (!deleted.length) throw new HttpGuardError(404, "not_found", "User not found");
+    await writeAudit(db, {
+      actorUserId: admin.userId,
+      action: "portal.user.deleted",
+      targetType: "user",
+      targetId: userId,
+      ...auditContext(c),
+    });
+    return c.json({ ok: true });
+  });
+
   app.post("/api/users/:userId/force-signout", async (c) => {
     const admin = c.get("admin");
     const userId = c.req.param("userId");
