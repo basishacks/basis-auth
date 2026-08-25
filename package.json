@@ -26,6 +26,7 @@
     "setup": "tsx scripts/generate-jwks.ts",
     "clients:add": "tsx scripts/add-client.ts",
     "clients:remove": "tsx scripts/remove-client.ts",
+    "admin:grant": "tsx scripts/admin-grant.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/database/migrate.ts",
     "db:check-dupes": "tsx scripts/check-dupes.ts"
