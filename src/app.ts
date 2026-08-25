@@ -114,6 +114,10 @@ export function createApp(
   app.use("*", secureHeaders());
   app.get("/health", (c) => c.json({ status: "ok" }));
 
+  app.get("/", async (c) => {
+    return c.redirect(process.env.DEVCONNECT_PORTAL_URL || "https://devconnect.biszweb.club/me")
+  })
+
   async function currentSession(c: Context) {
     const session = await sessions.find(getCookie(c, SSO_COOKIE));
     if (!session) return undefined;
