@@ -1,4 +1,5 @@
 import { eq, inArray, sql } from "drizzle-orm";
+import { OAuthError } from "./oauth/errors.js";
 import type { BootstrapPermissionGrant } from "./config.js";
 import type { Database } from "./database/client.js";
 import { userPermissions, users } from "./database/schema.js";
@@ -75,15 +76,20 @@ export function createIdentityService(
 
     // Claim pending accounts provisioned for this email (e.g. by
     // admin:grant) before their first real sign-in. Adoption is limited to
-    // accounts whose email was never verified, so a verified Microsoft or
-    // local account can never be hijacked by an email collision.
+    // placeholder stubs (local/pending, never email-verified) so neither a
+    // verified Microsoft account nor a real local password account can ever
+    // be hijacked by an email collision.
     const [claimable] = await db
-      .select({ id: users.id, emailVerified: users.emailVerified })
+      .select({ id: users.id, provider: users.provider, upstreamIssuer: users.upstreamIssuer })
       .from(users)
       .where(sql`lower(${users.email}) = ${normalizedEmail}`)
       .limit(1);
 
-    if (claimable && !claimable.emailVerified) {
+    if (
+      claimable &&
+      claimable.provider === "local" &&
+      claimable.upstreamIssuer === "pending"
+    ) {
       const [adopted] = await db
         .update(users)
         .set({
@@ -104,7 +110,9 @@ export function createIdentityService(
     }
 
     // Single-statement upsert; (xmax = 0) is true only for freshly inserted rows.
-    const [user] = await db
+    let user: { id: string; inserted: boolean } | undefined;
+    try {
+      [user] = await db
       .insert(users)
       .values({
         id: crypto.randomUUID(),
@@ -129,6 +137,14 @@ export function createIdentityService(
         },
       })
       .returning({ id: users.id, inserted: sql<boolean>`(xmax = 0)` });
+    } catch (error) {
+      // A verified email that already belongs to a different identity is a
+      // hard conflict: reject the sign-in instead of surfacing a raw 500.
+      if ((error as { code?: string }).code === "23505") {
+        throw new OAuthError("access_denied", "An account with this email already exists", 403);
+      }
+      throw error;
+    }
 
     if (!user) throw new Error("Upsert did not return the account row");
 
@@ -238,3 +254,5 @@ export function createIdentityService(
 }
 
 export type IdentityService = ReturnType<typeof createIdentityService>;
+
+

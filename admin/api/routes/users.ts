@@ -226,6 +226,14 @@ export function registerUserRoutes(app: AdminApp, deps: RouteDeps) {
       .safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) throw new HttpGuardError(400, "invalid_request", "Email and displayName are required");
     const email = body.data.email.trim().toLowerCase();
+    // Friendly duplicate handling: the unique index would otherwise surface
+    // as an anonymous 500.
+    const [emailTaken] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${email}`)
+      .limit(1);
+    if (emailTaken) throw new HttpGuardError(409, "email_exists", "An account with this email already exists");
     // Plaintext is returned exactly once; the account holder must reset it.
     const tempPassword = generateTempPassword();
     const userId = crypto.randomUUID();
