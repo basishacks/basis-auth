@@ -83,7 +83,7 @@ export function createOAuthService(
     const client = await clientById(input.clientId);
     if (!client) throw new OAuthError("invalid_request", `Client "${input.clientId}" is not registered or has been disabled.`, 400, 14001);
     if (!input.redirectUri || !client.metadata.redirectUris.includes(input.redirectUri)) {
-      throw new OAuthError("invalid_request", `redirect_uri is not registered for client "${client.metadata.name}"`, 400, 14100);
+      throw new OAuthError("invalid_request", `Redirect URI "${input.redirectUri}" is not registered for client "${client.metadata.name}"`, 400, 14100);
     }
     if (input.responseType == "token") {
       throw new OAuthError("unsupported_response_type", "response_type=token is deprecated for present OAuth2.1 client " + client.metadata.name + ". Adjust backward compatibilty in your developer portal.", 400, 14429);
