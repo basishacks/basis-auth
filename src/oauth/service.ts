@@ -1,7 +1,11 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import type { Database } from "../database/client.js";
-import { secretMatches, type StoredClientMetadata } from "../database/seed.js";
+import {
+  secretMatches,
+  type ClientOwner,
+  type StoredClientMetadata,
+} from "../database/seed.js";
 import {
   authorizationCodes,
   authorizationConsents,
@@ -29,15 +33,29 @@ export interface OAuthClient {
 }
 
 function parseMetadata(value: Record<string, unknown>): StoredClientMetadata {
+  const owners = Array.isArray(value.owners)
+    ? value.owners.map((owner): ClientOwner | undefined => {
+        if (!owner || typeof owner !== "object" || !("id" in owner) || !("role" in owner)) {
+          return undefined;
+        }
+        if (typeof owner.id !== "string" || typeof owner.role !== "string") return undefined;
+        const normalizedRole = owner.role.toLowerCase();
+        if (normalizedRole === "role.admin") return { id: owner.id, role: "role.ADMIN" };
+        if (normalizedRole === "role.general") return { id: owner.id, role: "role.GENERAL" };
+        return undefined;
+      })
+    : [];
   if (
     typeof value.name !== "string" ||
+    owners.length === 0 ||
+    owners.some((owner) => !owner) ||
     !Array.isArray(value.redirectUris) ||
     typeof value.public !== "boolean" ||
     !Array.isArray(value.scopes)
   ) {
     throw new Error("Stored client metadata is invalid");
   }
-  return value as StoredClientMetadata;
+  return { ...value, owners: owners as ClientOwner[] } as StoredClientMetadata;
 }
 
 export function createOAuthService(
@@ -503,3 +521,4 @@ export function createOAuthService(
 }
 
 export type OAuthService = ReturnType<typeof createOAuthService>;
+export const oauthServiceInternals = { parseMetadata };

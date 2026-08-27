@@ -4,6 +4,7 @@ import { loadConfig, type AppConfig } from "../config.js";
 import { createDatabase, type Database } from "../database/client.js";
 import { migrateDatabase } from "../database/migrate.js";
 import { seedConfiguration } from "../database/seed.js";
+import { oidcClients } from "../database/schema.js";
 import { createIdentityService, type IdentityService } from "../identity.js";
 import { createKeyService, type KeyService } from "./keys.js";
 import { createOAuthService, type OAuthService } from "./service.js";
@@ -53,6 +54,19 @@ describe.skipIf(process.env.RUN_POSTGRES_TESTS !== "1")("OAuth flow with Postgre
   afterAll(async () => {
     await close?.();
     await container?.stop();
+  });
+
+  it("assigns configured clients to the default owner", async () => {
+    const [client] = await db.select({ metadata: oidcClients.metadata }).from(oidcClients).limit(1);
+
+    expect(client?.metadata).toMatchObject({
+      owners: [
+        {
+          id: "c6ba1588-03bb-4c61-a4e1-3c7c82e919b5",
+          role: "role.ADMIN",
+        },
+      ],
+    });
   });
 
   it("issues audience-bound tokens, rejects code replay, and detects refresh reuse", async () => {

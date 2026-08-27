@@ -6,6 +6,12 @@ import type { Database } from "./client.js";
 import { oidcClients, resourceServers } from "./schema.js";
 
 const scrypt = promisify(scryptCallback);
+const defaultClientOwnerId = "c6ba1588-03bb-4c61-a4e1-3c7c82e919b5";
+
+export interface ClientOwner {
+  id: string;
+  role: "role.ADMIN" | "role.GENERAL";
+}
 
 async function hashSecret(secret: string): Promise<string> {
   const salt = randomBytes(16);
@@ -24,6 +30,7 @@ export async function secretMatches(secret: string, encoded: string | null): Pro
 
 export interface StoredClientMetadata extends Record<string, unknown> {
   name: string;
+  owners: ClientOwner[];
   redirectUris: string[];
   public: boolean;
   scopes: string[];
@@ -47,6 +54,7 @@ export async function seedConfiguration(
   for (const client of clients) {
     const metadata: StoredClientMetadata = {
       name: client.name ?? client.clientId,
+      owners: [{ id: defaultClientOwnerId, role: "role.ADMIN" }],
       redirectUris: client.redirectUris,
       public: client.public,
       scopes: client.scopes,
