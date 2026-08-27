@@ -52,6 +52,19 @@ describe("configuration", () => {
     );
   });
 
+  it("treats blank optional JSON arrays as empty", async () => {
+    const config = await loadConfig({
+      ...base,
+      OIDC_CLIENTS_JSON: "",
+      OIDC_RESOURCES_JSON: "",
+      BOOTSTRAP_PERMISSION_GRANTS_JSON: "",
+    });
+
+    expect(config.clients).toEqual([]);
+    expect(config.resources).toEqual([]);
+    expect(config.bootstrapPermissionGrants).toEqual([]);
+  });
+
   it("requires a filter mode when a client has filter content", async () => {
     await expect(
       loadConfig({

@@ -7,7 +7,7 @@ export interface ScopeDescription {
 const knownScopes: Record<string, Omit<ScopeDescription, "scope">> = {
   openid: { description: "Verify your identity", sensitive: false },
   profile: { description: "Access your name and profile picture", sensitive: false },
-  email: { description: "Access your email address", sensitive: true },
+  email: { description: "Access your email address", sensitive: false },
   offline_access: {
     description: "Maintain access while offline",
     sensitive: true,

@@ -27,6 +27,11 @@ const bootstrapGrantSchema = z.object({
   permissions: z.array(z.string().min(1)),
 });
 
+const optionalJsonArray = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  z.string().default("[]"),
+);
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -38,10 +43,10 @@ const environmentSchema = z.object({
   OIDC_COOKIE_KEYS: z.string().min(32),
   OIDC_JWKS_JSON: z.string().optional(),
   OIDC_JWKS_FILE: z.string().optional(),
-  OIDC_CLIENTS_JSON: z.string().default("[]"),
-  OIDC_RESOURCES_JSON: z.string().default("[]"),
+  OIDC_CLIENTS_JSON: optionalJsonArray,
+  OIDC_RESOURCES_JSON: optionalJsonArray,
   DEFAULT_PERMISSION: z.string().min(1).default("participant"),
-  BOOTSTRAP_PERMISSION_GRANTS_JSON: z.string().default("[]"),
+  BOOTSTRAP_PERMISSION_GRANTS_JSON: optionalJsonArray,
   MICROSOFT_ISSUER: z.url().optional(),
   MICROSOFT_CLIENT_ID: z.string().min(1).optional(),
   MICROSOFT_CLIENT_SECRET: z.string().min(1).optional(),
