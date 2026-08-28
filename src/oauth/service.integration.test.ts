@@ -1,4 +1,3 @@
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { loadConfig, type AppConfig } from "../config.js";
 import { createDatabase, type Database } from "../database/client.js";
@@ -9,8 +8,10 @@ import { createIdentityService, type IdentityService } from "../identity.js";
 import { createKeyService, type KeyService } from "./keys.js";
 import { createOAuthService, type OAuthService } from "./service.js";
 
-describe.skipIf(process.env.RUN_POSTGRES_TESTS !== "1")("OAuth flow with PostgreSQL", () => {
-  let container: StartedPostgreSqlContainer;
+const runIntegration =
+  process.env.RUN_POSTGRES_TESTS === "1" && Boolean(process.env.DATABASE_URL);
+
+describe.skipIf(!runIntegration)("OAuth flow with PostgreSQL", () => {
   let db: Database;
   let close: () => Promise<void>;
   let config: AppConfig;
@@ -18,9 +19,9 @@ describe.skipIf(process.env.RUN_POSTGRES_TESTS !== "1")("OAuth flow with Postgre
   let keys: KeyService;
   let oauth: OAuthService;
 
+  const databaseUrl = process.env.DATABASE_URL!;
+
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine").start();
-    const databaseUrl = container.getConnectionUri();
     config = await loadConfig({
       NODE_ENV: "test",
       DATABASE_URL: databaseUrl,
@@ -53,7 +54,6 @@ describe.skipIf(process.env.RUN_POSTGRES_TESTS !== "1")("OAuth flow with Postgre
 
   afterAll(async () => {
     await close?.();
-    await container?.stop();
   });
 
   it("assigns configured clients to the default owner", async () => {
