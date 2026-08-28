@@ -90,6 +90,7 @@ export const authSessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     authenticatedAt: timestamp("authenticated_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },
