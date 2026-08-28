@@ -22,7 +22,7 @@ Use TypeScript with ESM imports and match the formatting of the surrounding file
 
 ## Testing Guidelines
 
-Use Vitest for unit and route tests. Name tests as behavior statements, for example `it("redirects browser logout requests to the original authorization URL", ...)`. Add or update tests for authorization, token, identity, configuration, and migration-affecting behavior. PostgreSQL integration tests require Docker and `RUN_POSTGRES_TESTS=1`.
+Use Vitest for unit and route tests. Name tests as behavior statements, for example `it("redirects browser logout requests to the original authorization URL", ...)`. Add or update tests for authorization, token, identity, configuration, and migration-affecting behavior. PostgreSQL integration tests require a `DATABASE_URL` and `RUN_POSTGRES_TESTS=1`; they no longer need Docker.
 
 ## Commit & Pull Request Guidelines
 
