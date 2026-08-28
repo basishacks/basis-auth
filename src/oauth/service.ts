@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import type { Database } from "../database/client.js";
 import {
@@ -6,6 +6,7 @@ import {
   type ClientOwner,
   type StoredClientMetadata,
 } from "../database/seed.js";
+import { createClientCache, type ClientCache } from "./clientCache.js";
 import {
   authorizationCodes,
   authorizationConsents,
@@ -69,17 +70,22 @@ export function createOAuthService(
   keys: KeyService,
   identity: IdentityService,
 ) {
+  const clientByIdStmt = db
+    .select()
+    .from(oidcClients)
+    .where(eq(oidcClients.clientId, sql.placeholder("id")))
+    .limit(1)
+    .prepare("client_by_id");
+
   async function clientById(clientId: string): Promise<OAuthClient | undefined> {
-    const [row] = await db
-      .select()
-      .from(oidcClients)
-      .where(eq(oidcClients.clientId, clientId))
-      .limit(1);
+    const [row] = await clientByIdStmt.execute({ id: clientId });
     return row ? { ...row, metadata: parseMetadata(row.metadata) } : undefined;
   }
 
+  const clientCache: ClientCache = createClientCache(clientById, { ttlMs: 60_000 });
+
   async function authenticateClient(clientId: string, secret?: string) {
-    const client = await clientById(clientId);
+    const client = await clientCache.get(clientId);
     if (!client) throw new OAuthError("invalid_client", `Client "${clientId}" is not registered or has been disabled.`, 401, 14001);
     if (client.metadata.public) {
       if (secret) throw new OAuthError("invalid_client", "Public clients must not send a secret", 401, 14003);
@@ -103,9 +109,9 @@ export function createOAuthService(
     session?: { userId: string; authenticatedAt: Date };
   }) {
     if (!input.clientId) throw new OAuthError("invalid_request", "client_id is required");
-    const client = await clientById(input.clientId);
+    const client = await clientCache.get(input.clientId);
     if (!client) throw new OAuthError("invalid_request", `Client "${input.clientId}" is not registered or has been disabled.`, 400, 14001);
-    if (!input.redirectUri || !client.metadata.redirectUris.includes(input.redirectUri)) {
+    if (!input.redirectUri || !client.redirectUriSet.has(input.redirectUri)) {
       throw new OAuthError("invalid_request", `Redirect URI "${input.redirectUri}" is not registered for client "${client.metadata.name}"`, 400, 14100);
     }
     if (input.responseType == "token") {
@@ -179,7 +185,7 @@ export function createOAuthService(
       )
       .limit(1);
     if (!request) throw new OAuthError("invalid_request", "Interaction is invalid or expired", 404, 2400);
-    const client = await clientById(request.clientId);
+    const client = await clientCache.get(request.clientId);
     if (!client) throw new OAuthError("invalid_request", "Client no longer exists", 400, 14001);
     return { request, client };
   }
@@ -201,15 +207,11 @@ export function createOAuthService(
   }
 
   async function getClient(clientId: string) {
-    const client = await clientById(clientId);
+    const client = await clientCache.get(clientId);
     if (!client) throw new OAuthError("invalid_request", `Client "${clientId}" is not registered or has been disabled.`, 400, 14001);
     return {
       id: client.clientId,
       name: client.metadata.name,
-      redirectUris: client.metadata.redirectUris,
-      scopes: client.metadata.scopes,
-      resources: client.resources,
-      public: client.metadata.public,
     };
   }
 
@@ -362,7 +364,8 @@ export function createOAuthService(
       }
       throw new OAuthError("invalid_grant", "User is missing or disabled");
     }
-    const accessToken = await keys.issueAccessToken(input);
+    const permissions = await identity.permissionsFor(input.userId);
+    const accessToken = await keys.issueAccessToken(input, { user, permissions });
     const response: Record<string, unknown> = {
       access_token: accessToken,
       token_type: "Bearer",
@@ -370,7 +373,11 @@ export function createOAuthService(
       scope: input.scopes.join(" "),
     };
     if (input.nonce && input.authenticatedAt) {
-      response.id_token = await keys.issueIdToken({ ...input, accessToken, nonce: input.nonce, authenticatedAt: input.authenticatedAt });
+      const account = await identity.findAccount(input.userId);
+      response.id_token = await keys.issueIdToken(
+        { ...input, accessToken, nonce: input.nonce, authenticatedAt: input.authenticatedAt },
+        { account, permissions },
+      );
     }
     if (input.scopes.includes("offline_access")) {
       const refreshToken = randomToken(64);
