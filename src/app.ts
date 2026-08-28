@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import type { AppConfig } from "./config.js";
 import type { IdentityService } from "./identity.js";
@@ -11,6 +11,8 @@ import { OAuthError } from "./oauth/errors.js";
 import type { OAuthService } from "./oauth/service.js";
 import type { SessionService } from "./oauth/sessions.js";
 import type { MicrosoftService } from "./microsoft.js";
+import { clientIp, rateLimit, RateLimiter } from "./middleware/rateLimit.js";
+import { log } from "./log.js";
 
 const SSO_COOKIE = "basis_sso";
 const INTERACTION_COOKIE = "basis_bridge_id";
@@ -84,7 +86,7 @@ export function createApp(
           status: 500,
           error: "server_error",
           code: 50040,
-          error_description: error.toString(),
+          error_description: "The request could not be completed",
         };
   const originalAuthorizationUri = async (c: Context) => {
     try {
@@ -109,14 +111,64 @@ export function createApp(
     }
     return c.redirect(redirectTo, 303);
   };
-  // const interactionPage = (uid: string) => `${config.issuer}/oauth/interaction/${uid}`;
+
+  const openidConfiguration = {
+    issuer: config.issuer,
+    authorization_endpoint: `${config.issuer}/oauth/authorize`,
+    token_endpoint: `${config.issuer}/oauth/token`,
+    userinfo_endpoint: `${config.issuer}/oauth/userinfo`,
+    jwks_uri: `${config.issuer}/oauth/jwks`,
+    revocation_endpoint: `${config.issuer}/oauth/revoke`,
+    revocation_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+    end_session_endpoint: `${config.issuer}/oauth/logout`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    subject_types_supported: ["public"],
+    id_token_signing_alg_values_supported: ["RS256"],
+    token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+    scopes_supported: ["openid", "profile", "email", "permissions", "offline_access"],
+    claims_supported: ["sub", "name", "picture", "email", "email_verified", "permissions"],
+    code_challenge_methods_supported: ["S256"],
+  };
+  const oauthAuthorizationServerConfiguration = {
+    issuer: config.issuer,
+    authorization_endpoint: `${config.issuer}/oauth/authorize`,
+    token_endpoint: `${config.issuer}/oauth/token`,
+    jwks_uri: `${config.issuer}/oauth/jwks`,
+    revocation_endpoint: `${config.issuer}/oauth/revoke`,
+    revocation_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+    code_challenge_methods_supported: ["S256"],
+  };
+
+  const limiter = new RateLimiter({ windowMs: 60_000, max: 120 });
+  const limitKey = (c: Context) => `${c.req.path}:${clientIp(c)}`;
+
+  const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const corsMiddleware = (origins: string[]): MiddlewareHandler => {
+    return async (c, next) => {
+      const origin = c.req.header("origin");
+      if (origin && origins.includes(origin)) {
+        c.header("Access-Control-Allow-Origin", origin);
+        c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        c.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      }
+      if (c.req.method === "OPTIONS") return new Response(null, { status: 204, headers: c.res.headers });
+      await next();
+    };
+  };
 
   app.use("*", secureHeaders());
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   app.get("/", async (c) => {
-    return c.redirect(process.env.DEVCONNECT_PORTAL_URL || "https://devconnect.biszweb.club/me")
-  })
+    return c.redirect(process.env.DEVCONNECT_PORTAL_URL || "https://devconnect.biszweb.club/me");
+  });
 
   async function currentSession(c: Context) {
     const session = await sessions.find(getCookie(c, SSO_COOKIE));
@@ -142,7 +194,10 @@ export function createApp(
   });
 
   app.get("/api/picture/:userId", async (c) => {
-    const user = await identity.findUser(c.req.param("userId"));
+    const session = await sessions.find(getCookie(c, SSO_COOKIE));
+    const userId = c.req.param("userId");
+    if (!session || session.userId !== userId) return c.json({ error: "not_found" }, 404);
+    const user = await identity.findUser(userId);
     if (!user?.picture || !user.pictureContentType) {
       return c.json({ error: "not_found" }, 404);
     }
@@ -151,44 +206,29 @@ export function createApp(
     return c.body(new Uint8Array(user.picture));
   });
 
-  app.get("/.well-known/openid-configuration", (c) =>
-    c.json({
-      issuer: config.issuer,
-      authorization_endpoint: `${config.issuer}/oauth/authorize`,
-      token_endpoint: `${config.issuer}/oauth/token`,
-      userinfo_endpoint: `${config.issuer}/oauth/userinfo`,
-      jwks_uri: `${config.issuer}/oauth/jwks`,
-      revocation_endpoint: `${config.issuer}/oauth/revoke`,
-      revocation_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
-      end_session_endpoint: `${config.issuer}/oauth/logout`,
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      subject_types_supported: ["public"],
-      id_token_signing_alg_values_supported: ["RS256"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
-      scopes_supported: ["openid", "profile", "email", "permissions", "offline_access"],
-      claims_supported: ["sub", "name", "picture", "email", "email_verified", "permissions"],
-      code_challenge_methods_supported: ["S256"],
-    }),
-  );
-  app.get("/.well-known/oauth-authorization-server", (c) =>
-    c.json({
-      issuer: config.issuer,
-      authorization_endpoint: `${config.issuer}/oauth/authorize`,
-      token_endpoint: `${config.issuer}/oauth/token`,
-      jwks_uri: `${config.issuer}/oauth/jwks`,
-      revocation_endpoint: `${config.issuer}/oauth/revoke`,
-      revocation_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
-      code_challenge_methods_supported: ["S256"],
-    }),
-  );
+  app.get("/.well-known/openid-configuration", (c) => {
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json(openidConfiguration);
+  });
+  app.get("/.well-known/oauth-authorization-server", (c) => {
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json(oauthAuthorizationServerConfiguration);
+  });
   app.get("/oauth/jwks", (c) => {
     c.header("Cache-Control", "public, max-age=300, stale-while-revalidate=300");
     return c.json(keys.publicJwks);
   });
+
+  app.use("/oauth/token", rateLimit(limiter, limitKey));
+  app.use("/oauth/revoke", rateLimit(limiter, limitKey));
+  app.use("/oauth/authorize", rateLimit(limiter, limitKey));
+  app.use("/oauth/interaction/:uid/consent", rateLimit(limiter, limitKey));
+  app.use("/oauth/callback/microsoft", rateLimit(limiter, limitKey));
+  app.use("/api/me", rateLimit(limiter, limitKey));
+  if (allowedOrigins.length > 0) {
+    app.use("/oauth/token", corsMiddleware(allowedOrigins));
+    app.use("/oauth/userinfo", corsMiddleware(allowedOrigins));
+  }
 
   app.use("/oauth/token", async (c, next) => {
     c.header("Cache-Control", "no-store");
@@ -257,23 +297,9 @@ export function createApp(
       maxAge: 10 * 60,
     });
 
-    console.log("start auth", started.interactionToken)
-
-    // const { request, client } = await oauth.interaction(started.id, started.interactionToken);
-    // if (request.userId && !(await oauth.requiresConsent(request, client))) {
-    //   deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
-    //   return c.html(await readFile("./web/dist/index.html", "utf8"))
-    // }
-    return c.html(await readFile("./web/dist/index.html", "utf8"))
+    return c.html(await readFile("./web/dist/index.html", "utf8"));
   });
 
-  // app.get("/oauth/interaction", async (c) => {
-  //   const interaction = await oauth.getAuthorization(getCookie(c, INTERACTION_COOKIE)!);
-  //   console.log("interaction", interaction)
-
-  // })
-
-  // dep
   app.get("/oauth/interaction", async (c) => {
     const bridgeToken = getCookie(c, INTERACTION_COOKIE);
     if (!bridgeToken) throw new OAuthError("invalid_request", "Interaction cookie is missing");
@@ -310,9 +336,6 @@ export function createApp(
     return c.json({ redirectTo });
   });
 
-
-  // dep
-
   app.get("/oauth/upstream/microsoft", async (c) => {
     try {
       const uid = c.req.query("uid");
@@ -325,8 +348,8 @@ export function createApp(
       }
       return c.redirect(redirectTo, 302);
     } catch (error: any) {
-      console.log(error)
-      return frontendFlowError(c, "Upstream Error: " + error.toString());
+      log.error(error, "Microsoft upstream begin failed");
+      return frontendFlowError(c, "Upstream Error");
     }
   });
 
@@ -340,8 +363,8 @@ export function createApp(
         getCookie(c, INTERACTION_COOKIE),
       );
       const filteredEmail = result.user.email.trim().toLowerCase();
-      const filterContent = client?.filterContent ?? [];
-      const matchesFilter = filterContent.includes(filteredEmail);
+      const filterContent = client?.filterContentSet ?? new Set<string>();
+      const matchesFilter = filterContent.has(filteredEmail);
       if (
         result.user.disabled ||
         (client?.filterMode === "whitelist" && !matchesFilter) ||
@@ -356,7 +379,7 @@ export function createApp(
     } catch (error: any) {
       return frontendFlowError(
         c,
-        error instanceof OAuthError ? error : "Upstream Error: " + error.toString(),
+        error instanceof OAuthError ? error : "Upstream Error",
       );
     }
   });
@@ -425,21 +448,23 @@ export function createApp(
     app.use("/*", serveStatic({ root: "./web/dist" }));
   }
   const serveIndex = async (c: Context) => c.html(await readFile("./web/dist/index.html", "utf8"));
-  // app.get("/", serveIndex);
-  // app.get("/oauth/interaction/:uid", serveIndex);
-  // app.get("/signed-out", serveIndex);
   app.notFound(async (c) => {
     return c.json({ error: "not_found", error_description: "The requested resource does not exist" }, 404);
   });
 
   app.onError((error, c) => {
-    console.error("Request failed", error);
+    log.error(error, "Request failed");
     if (error instanceof OAuthError) {
       return c.json(error.toJSON(), error.status as 400);
     }
-    // if (acceptsHtml(c)) {
-    //   return c.html(statusPage("Something went wrong", "Basis Auth could not complete this request. Please try again."), 500);
-    // }
+    const accept = c.req.header("accept") ?? "";
+    if (accept.includes("text/html")) {
+      c.status(500);
+      return c.html(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Something went wrong</title></head>" +
+          "<body><h1>Something went wrong</h1><p>The request could not be completed.</p></body></html>",
+      );
+    }
     return c.json({ error: "server_error", error_description: "The request could not be completed" }, 500);
   });
   return app;
