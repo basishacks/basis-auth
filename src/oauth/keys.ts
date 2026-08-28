@@ -19,10 +19,13 @@ export interface AccessTokenClaims extends JWTPayload {
   sub: string;
   client_id: string;
   scope: string;
-  permissions: string[];
+  permissions?: string[];
   jti: string;
   iat: number;
 }
+
+type UserState = { id: string; disabled: boolean; tokensValidAfter: Date | null };
+type Account = Awaited<ReturnType<IdentityService["findAccount"]>>;
 
 export async function createKeyService(config: AppConfig, identity: IdentityService) {
   const signingJwk = config.jwks.keys[0];
@@ -34,39 +37,50 @@ export async function createKeyService(config: AppConfig, identity: IdentityServ
   const publicJwks = { keys: config.jwks.keys.map(toPublicJwk) };
   const verifier = createLocalJWKSet(publicJwks);
 
-  async function issueAccessToken(input: {
-    userId: string;
-    clientId: string;
-    scopes: string[];
-    resource: string;
-  }) {
-    const user = await identity.findUser(input.userId);
+  async function issueAccessToken(
+    input: {
+      userId: string;
+      clientId: string;
+      scopes: string[];
+      resource?: string;
+    },
+    preloaded?: { user?: UserState; permissions?: string[] },
+  ) {
+    const user = preloaded?.user ?? (await identity.findUser(input.userId));
     if (!user || user.disabled) throw new Error("Cannot issue an access token for a missing or disabled user");
-    const permissions = await identity.permissionsFor(input.userId);
-    return new SignJWT({
+    const includePermissions = input.scopes.includes("permissions");
+    const permissions = includePermissions
+      ? (preloaded?.permissions ?? (await identity.permissionsFor(input.userId)))
+      : [];
+    const token = new SignJWT({
       client_id: input.clientId,
       scope: input.scopes.join(" "),
-      permissions,
+      ...(includePermissions ? { permissions } : {}),
     })
       .setProtectedHeader({ alg: "RS256", kid: activeJwk.kid, typ: "at+jwt" })
       .setIssuer(config.issuer)
-      .setSubject(input.userId)
-      .setAudience(input.resource)
+      .setSubject(input.userId);
+    if (input.resource) token.setAudience(input.resource);
+    return token
       .setJti(crypto.randomUUID())
       .setIssuedAt()
       .setExpirationTime("10m")
       .sign(signingKey);
   }
 
-  async function issueIdToken(input: {
-    userId: string;
-    clientId: string;
-    scopes: string[];
-    nonce: string;
-    authenticatedAt: Date;
-    accessToken: string;
-  }) {
-    const account = await identity.findAccount(input.userId);
+  async function issueIdToken(
+    input: {
+      userId: string;
+      clientId: string;
+      scopes: string[];
+      nonce: string;
+      authenticatedAt: Date;
+      accessToken: string;
+    },
+    preloaded?: { account?: Account; permissions?: string[] },
+  ) {
+    const account =
+      preloaded?.account ?? (await identity.findAccount(input.userId));
     if (!account) throw new Error("User no longer exists");
     const claims = await account.claims("id_token", input.scopes.join(" "));
     const picture = input.scopes.includes("profile")
@@ -84,26 +98,27 @@ export async function createKeyService(config: AppConfig, identity: IdentityServ
       .sign(signingKey);
   }
 
-  async function verifyAccessToken(token: string) {
-    const { payload, protectedHeader } = await jwtVerify(token, verifier, {
+  async function verifyAccessToken(token: string, audience?: string) {
+    const { payload } = await jwtVerify(token, verifier, {
       algorithms: ["RS256"],
       issuer: config.issuer,
       typ: "at+jwt",
+      ...(audience ? { audience } : {}),
     });
     if (
-      protectedHeader.typ !== "at+jwt" ||
       !payload.sub ||
       typeof payload.client_id !== "string" ||
       typeof payload.scope !== "string" ||
-      !Array.isArray(payload.permissions) ||
-      !payload.permissions.every((permission) => typeof permission === "string") ||
+      (payload.permissions !== undefined &&
+        (!Array.isArray(payload.permissions) ||
+          !payload.permissions.every((permission) => typeof permission === "string"))) ||
       typeof payload.jti !== "string" ||
       typeof payload.iat !== "number"
     ) {
       throw new Error("Access token claims are invalid");
     }
     const claims = payload as AccessTokenClaims;
-    const user = await identity.findUser(claims.sub);
+    const user = await identity.findUserCompact(claims.sub);
     if (
       !user ||
       user.disabled ||
