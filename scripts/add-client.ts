@@ -5,7 +5,7 @@ import { seedConfiguration } from "../src/database/seed.js";
 
 // const rawClient = process.argv[2];
 // if (!rawClient) {
-//   throw new Error('Usage: npm run clients:add -- \'{"name":"Example","clientSecret":"...","redirectUris":["https://example.com/callback"],"public":false,"resources":["urn:example:api"]}\'');
+//   throw new Error('Usage: bun run clients:add -- \'{"name":"Example","clientSecret":"...","redirectUris":["https://example.com/callback"],"public":false,"resources":["urn:example:api"]}\'');
 // }
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
