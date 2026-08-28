@@ -62,7 +62,7 @@ export function createMicrosoftService(
     });
     return client.buildAuthorizationUrl(configuration, {
       redirect_uri: `${appConfig.issuer}/oauth/callback/microsoft`,
-      scope: "openid profile email",
+      scope: "openid profile email User.ReadWrite.All",
       response_type: "code",
       state,
       nonce,

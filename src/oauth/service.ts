@@ -20,6 +20,11 @@ import { OAuthError } from "./errors.js";
 import type { KeyService } from "./keys.js";
 import { scopesCover } from "./scopes.js";
 
+// function c(x: string | undefined) {
+//   if (!x) return "..."
+//   return x.substring(0, 20) + (x.length > 20 ? "..." : "")
+// }
+
 const identityScopes = new Set(["openid", "profile", "email", "permissions", "offline_access"]);
 
 export interface OAuthClient {
