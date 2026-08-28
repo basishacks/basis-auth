@@ -11,21 +11,43 @@ interface ProfileData {
   picture: string | null;
 }
 
-export function Profile({ disabled, onLogout }: { disabled?: boolean; onLogout: () => void }) {
+function isProfileData(value: unknown): value is ProfileData {
+  if (!value || typeof value !== "object") return false;
+  const profile = value as Record<string, unknown>;
+  return (
+    (typeof profile.name === "string" || profile.name === null) &&
+    typeof profile.email === "string" &&
+    (typeof profile.picture === "string" || profile.picture === null)
+  );
+}
+
+export function Profile({
+  disabled,
+  onLogout,
+  onReady,
+}: {
+  disabled?: boolean;
+  onLogout: () => void;
+  onReady: () => void;
+}) {
   const [profile, setProfile] = useState<ProfileData>();
 
   useEffect(() => {
     let active = true;
     void fetch("/api/me")
-      .then((response) => (response.ok ? response.json() : undefined))
-      .then((value: ProfileData | undefined) => {
-        if (active) setProfile(value);
+      .then((response) => (response.ok ? response.json() as Promise<unknown> : undefined))
+      .then((value) => {
+        if (active && isProfileData(value)) setProfile(value);
       })
       .catch(() => undefined);
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (profile) onReady();
+  }, [onReady, profile]);
 
   if (!profile) return null;
 

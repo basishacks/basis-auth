@@ -1,5 +1,5 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LoginCard, Status, StatusError } from "./components/LoginCard";
 import { ToastProvider } from "./components/ui/toast";
 
@@ -13,11 +13,16 @@ export function App() {
   const [_status, setStatus] = useState<Status>({loading: true, page: "none", login: undefined});
 
   const animate = (page: string, error?: StatusError, loginContent?: any) => {
-    setStatus({loading: false, error, page: "none"});
+    const waitForProfile = page === "consent";
+    setStatus({loading: waitForProfile, error, page: "none"});
     setTimeout(() => {
-      setStatus({loading: false, error, page, login: loginContent});
+      setStatus({loading: waitForProfile, error, page, login: loginContent});
     }, 500)
   }
+
+  const profileReady = useCallback(() => {
+    setStatus((status) => status.page === "consent" ? { ...status, loading: false } : status);
+  }, []);
 
   const resetToLogin = async () => {
     const res = await fetch("/oauth/interaction", { headers: { Accept: "application/json" } });
@@ -65,7 +70,7 @@ export function App() {
   return (
     <ToastProvider>
       <main className="flex min-h-screen items-center justify-center">
-        <LoginCard stat={_status} onLogout={resetToLogin}></LoginCard>
+        <LoginCard stat={_status} onLogout={resetToLogin} onProfileReady={profileReady}></LoginCard>
       </main>
     </ToastProvider>
   );

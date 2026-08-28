@@ -6,13 +6,14 @@ interface FadeProps {
     duration?: number;
     className?: string;
     children: ReactNode;
+    onExited?: () => void;
 }
 
 /**
  * Vue <Transition>-style fade: keeps children mounted while `show` is false
  * until the opacity transition has finished, then unmounts them.
  */
-export function Fade({ show, duration = 300, className, children }: FadeProps) {
+export function Fade({ show, duration = 300, className, children, onExited }: FadeProps) {
     const [mounted, setMounted] = useState(show);
     const [visible, setVisible] = useState(show);
 
@@ -27,9 +28,12 @@ export function Fade({ show, duration = 300, className, children }: FadeProps) {
             return () => cancelAnimationFrame(frame);
         }
         setVisible(false);
-        const timeout = setTimeout(() => setMounted(false), duration);
+        const timeout = setTimeout(() => {
+            setMounted(false);
+            onExited?.();
+        }, duration);
         return () => clearTimeout(timeout);
-    }, [show, duration]);
+    }, [show, duration, onExited]);
 
     if (!mounted) return null;
 

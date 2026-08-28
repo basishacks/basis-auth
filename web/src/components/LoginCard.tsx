@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, Check, CircleAlert, CircleQuestionMark, ExternalLink } from "lucide-react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Spinner } from "./ui/spinner";
@@ -38,9 +38,18 @@ export interface AuthorizeSession {
       microsoftConfigured: boolean,
 };
 
-export function LoginCard({ stat, onLogout }: { stat: Status; onLogout: () => Promise<void> }) {
+export function LoginCard({
+    stat,
+    onLogout,
+    onProfileReady,
+}: {
+    stat: Status;
+    onLogout: () => Promise<void>;
+    onProfileReady: () => void;
+}) {
 
     const [hold, setHold] = useState<false | "microsoft" | "consent" | "logout">(false);
+    const [loadingExited, setLoadingExited] = useState(false);
     const { toast } = useToast();
     const scopes = describeScopes(stat.login?.scopes ?? []);
     const visibleScopes = scopes.length > 3 ? scopes.slice(0, 2) : scopes;
@@ -52,6 +61,14 @@ export function LoginCard({ stat, onLogout }: { stat: Status; onLogout: () => Pr
             {scope.description} 
         </li>
     );
+
+    const loadingFinishedExiting = useCallback(() => {
+        setLoadingExited(true);
+    }, []);
+
+    useEffect(() => {
+        if (stat.loading) setLoadingExited(false);
+    }, [stat.loading]);
 
     const visitMicrosoft = async () => {
         if (!stat.login?.uid) return;
@@ -138,12 +155,12 @@ export function LoginCard({ stat, onLogout }: { stat: Status; onLogout: () => Pr
 
     return (
         <Card className="relative h-80 w-80 m-auto">
-            <Fade show={stat.loading}>
+            <Fade show={stat.loading} onExited={loadingFinishedExiting}>
                 <Spinner
                     className="absolute top-1/2 left-1/2 size-6 -translate-x-1/2 -translate-y-1/2"
                 />
             </Fade>
-            <div className={cn("flex flex-col justify-between h-full transition-opacity duration-300", (stat.page == "content" || stat.page == "login" || stat.page == "consent") ? "opacity-100" : "pointer-events-none opacity-0", hold && "pointer-events-none")}>
+            <div data-testid="main-content" className={cn("flex flex-col justify-between h-full transition-opacity duration-300", (!stat.loading && loadingExited && (stat.page == "content" || stat.page == "login" || stat.page == "consent")) ? "opacity-100" : "pointer-events-none opacity-0", hold && "pointer-events-none")}>
                 <CardHeader className="flex-1">
                     <Label className="font-mono text-devconnect glow flicker">DevConnect</Label>
                 </CardHeader>
@@ -181,7 +198,7 @@ export function LoginCard({ stat, onLogout }: { stat: Status; onLogout: () => Pr
 
                     {stat.page == "consent" && (
                         <div className="flex flex-col gap-2 mt-2">
-                            <Profile disabled={hold === "logout"} onLogout={logout} />
+                            <Profile disabled={hold === "logout" || hold === "consent"} onLogout={logout} onReady={onProfileReady} />
                             <Label className="mt-2">Allow <Label className="text-devconnect">{stat.login?.client.name}</Label> to...</Label>
                             <ul className="space-y-1">
                             {visibleScopes.map(scopeItem)}
