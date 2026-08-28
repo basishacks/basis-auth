@@ -9,12 +9,12 @@
 
 ## Build, Test, and Development Commands
 
-- `npm run dev` builds the UI, watches the backend, and watches UI builds.
-- `npm run dev:web` runs Vite’s development server for UI work.
-- `npm run typecheck` checks both server and web TypeScript projects.
-- `npm run build` creates the production web build and compiles server code to `dist/`.
-- `npm test` runs the Vitest suite; target a file with `npx vitest run src/app.test.ts`.
-- `npm run db:generate` creates a Drizzle migration after changing `src/database/schema.ts`; use `npm run db:migrate` to apply migrations with `DATABASE_URL` set.
+- `bun run dev` builds the UI, watches the backend, and watches UI builds.
+- `bun run dev:web` runs Vite’s development server for UI work.
+- `bun run typecheck` checks both server and web TypeScript projects.
+- `bun run build` creates the production web build and compiles server code to `dist/`.
+- `bun run test` runs the Vitest suite; target a file with `bunx vitest run src/app.test.ts`.
+- `bun run db:generate` creates a Drizzle migration after changing `src/database/schema.ts`; use `bun run db:migrate` to apply migrations with `DATABASE_URL` set.
 
 ## Coding Style & Naming Conventions
 
