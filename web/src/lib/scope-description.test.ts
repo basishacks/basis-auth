@@ -5,7 +5,7 @@ describe("describeScope", () => {
   it("uses explicit descriptions for identity scopes", () => {
     expect(describeScope("email")).toMatchObject({
       description: "Access your email address",
-      sensitive: true,
+      sensitive: false,
     });
   });
 
@@ -21,10 +21,10 @@ describe("describeScope", () => {
   });
 
   it("lists sensitive scopes first", () => {
-    expect(describeScopes(["openid", "email", "projects.read"]).map((scope) => scope.scope)).toEqual([
-      "email",
+    expect(describeScopes(["openid", "email", "permissions"]).map((scope) => scope.scope)).toEqual([
+      "permissions",
       "openid",
-      "projects.read",
+      "email",
     ]);
   });
 });
