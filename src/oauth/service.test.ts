@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { oauthServiceInternals } from "./service.js";
+import { describe, expect, it, vi } from "vitest";
+import type { AppConfig } from "../config.js";
+import type { IdentityService } from "../identity.js";
+import type { KeyService } from "./keys.js";
+import { createOAuthService, oauthServiceInternals } from "./service.js";
 
 const metadata = {
   name: "Portal",
@@ -30,5 +33,65 @@ describe("stored client metadata", () => {
         owners: [{ id: "c6ba1588-03bb-4c61-a4e1-3c7c82e919b5", role: "role.OWNER" }],
       }),
     ).toThrow("Stored client metadata is invalid");
+  });
+});
+
+describe("client lookup", () => {
+  const clientRow = {
+    clientId: "client-1",
+    secretHash: "stored-secret-hash",
+    resources: ["urn:basis:api:test"],
+    requireConsent: false,
+    filterMode: null,
+    filterContent: ["allowed@example.test"],
+    metadata: {
+      name: "Portal",
+      owners: [{ id: "c6ba1588-03bb-4c61-a4e1-3c7c82e919b5", role: "role.ADMIN" }],
+      redirectUris: ["https://portal.example.test/callback"],
+      public: false,
+      scopes: ["openid"],
+    },
+  };
+  const execute = vi.fn(async () => [clientRow]);
+  const db = {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: () => ({
+            prepare: () => ({ execute }),
+          }),
+        }),
+      }),
+    }),
+  } as unknown as Parameters<typeof createOAuthService>[1];
+
+  const config = {
+    issuer: "https://auth.example.test",
+    cookieKeys: ["a".repeat(32)],
+  } as AppConfig;
+  const service = createOAuthService(
+    config,
+    db,
+    {} as KeyService,
+    {} as IdentityService,
+  );
+
+  it("returns only the id and name to the frontend", async () => {
+    await expect(service.getClient("client-1")).resolves.toEqual({ id: "client-1", name: "Portal" });
+  });
+
+  it("serves repeated lookups from the in-memory cache", async () => {
+    await service.getClient("client-1");
+    await service.getClient("client-1");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws when the client does not exist", async () => {
+    const missing = vi.fn(async () => []);
+    const missingDb = {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => ({ prepare: () => ({ execute: missing }) }) }) }) }),
+    } as unknown as Parameters<typeof createOAuthService>[1];
+    const missingService = createOAuthService(config, missingDb, {} as KeyService, {} as IdentityService);
+    await expect(missingService.getClient("missing")).rejects.toThrow("not registered or has been disabled");
   });
 });
