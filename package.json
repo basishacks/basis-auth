@@ -11,7 +11,7 @@
     "esbuild": "0.28.1"
   },
   "scripts": {
-    "dev": "vite build --config web/vite.config.ts && concurrently --kill-others-on-fail -n auth,web \"node --watch --import tsx src/index.ts\" \"vite --config web/vite.config.ts\"",
+    "dev": "vite build --config web/vite.config.ts && concurrently --kill-others-on-fail -n auth,build,web \"node --watch --import tsx src/index.ts\" \"vite build --watch --config web/vite.config.ts\" \"vite --config web/vite.config.ts\"",
     "dev:auth": "node --watch --import tsx src/index.ts",
     "dev:client": "vite build --watch --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
