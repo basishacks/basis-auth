@@ -59,6 +59,12 @@ export function App() {
 
 
       const res = await fetch("/oauth/interaction", { headers: { Accept: "application/json" } });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "interaction_failed", error_description: "Could not load the login session." }));
+        await delay(300);
+        animate("content", { status: res.status, ...err });
+        return;
+      }
       const loginContent = await res.json()
       await delay(300);
 
