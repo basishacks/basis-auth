@@ -167,7 +167,7 @@ export function createApp(
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   app.get("/", async (c) => {
-    return c.redirect(process.env.DEVCONNECT_PORTAL_URL || "https://devconnect.biszweb.club/me");
+    return c.redirect("/.well-known/openid-configuration");
   });
 
   async function currentSession(c: Context) {
