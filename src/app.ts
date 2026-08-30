@@ -70,6 +70,11 @@ export function createApp(
     secure: config.environment === "production",
     sameSite: "Lax" as const,
     path: "/",
+    ...(config.environment !== "production" ? { domain: "localhost" } : {}),
+  };
+  const deleteCookieOptions = {
+    path: "/",
+    ...(config.environment !== "production" ? { domain: "localhost" } : {}),
   };
   const csrfToken = (uid: string) =>
     createHmac("sha256", config.cookieKeys[0]!).update(`interaction:${uid}`).digest("base64url");
@@ -167,7 +172,7 @@ export function createApp(
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   app.get("/", async (c) => {
-    return c.redirect("/.well-known/openid-configuration");
+    return c.redirect("/oauth/authorize");
   });
 
   async function currentSession(c: Context) {
@@ -251,18 +256,18 @@ export function createApp(
         if (request.initialUri === initialUri) {
           return c.html(await readFile("./web/dist/index.html", "utf8"));
         }
-        deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
-        deleteCookie(c, ERROR_COOKIE, { path: "/oauth" });
+        deleteCookie(c, INTERACTION_COOKIE, { ...deleteCookieOptions, path: "/oauth" });
+        deleteCookie(c, ERROR_COOKIE, { ...deleteCookieOptions, path: "/oauth" });
       } catch (error) {
         if (!(error instanceof OAuthError)) throw error;
-        deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
+        deleteCookie(c, INTERACTION_COOKIE, { ...deleteCookieOptions, path: "/oauth" });
         if (bridgeError) return c.html(await readFile("./web/dist/index.html", "utf8"));
-        deleteCookie(c, ERROR_COOKIE, { path: "/oauth" });
+        deleteCookie(c, ERROR_COOKIE, { ...deleteCookieOptions, path: "/oauth" });
       }
     } else if (bridgeError) {
       return c.html(await readFile("./web/dist/index.html", "utf8"));
     } else {
-      deleteCookie(c, ERROR_COOKIE, { path: "/oauth" });
+      deleteCookie(c, ERROR_COOKIE, { ...deleteCookieOptions, path: "/oauth" });
     }
 
     const sso = await sessions.find(getCookie(c, SSO_COOKIE));
@@ -326,13 +331,13 @@ export function createApp(
     const body = await c.req.json<{ action?: string }>();
     if (body.action === "deny") {
       const redirectTo = await oauth.denyAuthorization(request);
-      deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
+      deleteCookie(c, INTERACTION_COOKIE, { ...deleteCookieOptions, path: "/oauth" });
       return c.json({ redirectTo });
     }
     if (body.action !== "allow") return c.json({ error: "invalid_action" }, 400);
     await oauth.grantConsent(request);
     const redirectTo = await oauth.completeAuthorization(request.id);
-    deleteCookie(c, INTERACTION_COOKIE, { path: "/oauth" });
+    deleteCookie(c, INTERACTION_COOKIE, { ...deleteCookieOptions, path: "/oauth" });
     return c.json({ redirectTo });
   });
 
@@ -430,7 +435,7 @@ export function createApp(
 
   const logout = async (c: Context) => {
     await sessions.destroy(getCookie(c, SSO_COOKIE));
-    deleteCookie(c, SSO_COOKIE, { path: "/" });
+    deleteCookie(c, SSO_COOKIE, deleteCookieOptions);
     const interactionToken = getCookie(c, INTERACTION_COOKIE);
     let redirectTo = "/oauth/authorize";
     if (interactionToken) {
