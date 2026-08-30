@@ -21,6 +21,7 @@ export default defineConfig({
       "/.well-known": "http://localhost:3000",
       "/api": "http://localhost:3000",
       "/health": "http://localhost:3000",
+      "/assets": "http://localhost:3000",
     },
   },
 });
