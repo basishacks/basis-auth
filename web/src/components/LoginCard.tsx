@@ -190,7 +190,27 @@ export function LoginCard({
                             {hold !== "microsoft" ? <><MicrosoftLogo className="size-4" />
                             Microsoft</> : <Spinner></Spinner>}
                         </Button>
-                    <Label className="text-muted-foreground text-xs">A <code>basischina.com</code> email is required.</Label>
+                        <div className="flex">
+                            <Label className="text-muted-foreground text-xs">A&nbsp;</Label>
+                            <HoverCard openDelay={200} closeDelay={200}>
+                                <HoverCardTrigger>
+                                    <div className="flex gap-2 items-center text-muted-foreground">
+                                        <Label className="text-xs text-primary">BASIS Organization</Label>
+                                    </div>
+                                </HoverCardTrigger>
+                                <HoverCardContent>
+                                    <Label>Must be one of the following:</Label>
+                                    <div className="flex flex-col gap-1 mt-3">
+                                        <Label><a href="https://basischina.com" target="_blank" className="text-primary">basischina.com</a></Label>
+                                        <Label><a href="https://basis-global.com" target="_blank" className="text-primary">basis-global.com</a></Label>
+                                        <Label><a href="https://basisinternational-sz.com" target="_blank" className="text-primary">basisinternational-sz.net</a></Label>
+                                        <Label><a href="https://basisinternationalnj.com" target="_blank" className="text-primary">basisinternationalnj.com</a></Label>
+                                        <Label><a href="https://basisinternationalsz.com" target="_blank" className="text-primary">basisinternationalsz.com</a></Label>
+                                    </div>
+                                </HoverCardContent>
+                            </HoverCard>
+                            <Label className="text-muted-foreground text-xs">&nbsp;account is required.</Label>
+                        </div>
                     <Label className="text-muted-foreground text-xs">You will be redirected back to DevConnect after completing Microsoft Login.</Label>
                         </div>
                         
