@@ -82,4 +82,10 @@ describe("configuration", () => {
       }),
     ).rejects.toThrow("requires filterMode");
   });
+
+  it("rejects placeholder cookie-signing keys", async () => {
+    await expect(
+      loadConfig({ ...base, OIDC_COOKIE_KEYS: "changeme-changeme-changeme-changeme" }),
+    ).rejects.toThrow("must be replaced with real randomly generated values");
+  });
 });

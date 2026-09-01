@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { BootstrapPermissionGrant } from "./config.js";
 import type { Database } from "./database/client.js";
 import { userPermissions, users } from "./database/schema.js";
@@ -114,7 +114,23 @@ export function createIdentityService(
     return user;
   }
 
-  return { upsertFromMicrosoft, findAccount, permissionsFor, findUsersByIds, findUser };
+  const findUserCompactStmt = db
+    .select({
+      id: users.id,
+      disabled: users.disabled,
+      tokensValidAfter: users.tokensValidAfter,
+    })
+    .from(users)
+    .where(eq(users.id, sql.placeholder("id")))
+    .limit(1)
+    .prepare("find_user_compact");
+
+  async function findUserCompact(userId: string) {
+    const [user] = await findUserCompactStmt.execute({ id: userId });
+    return user;
+  }
+
+  return { upsertFromMicrosoft, findAccount, permissionsFor, findUsersByIds, findUser, findUserCompact };
 }
 
 export type IdentityService = ReturnType<typeof createIdentityService>;

@@ -30,13 +30,13 @@ Access tokens are ten-minute RS256 JWTs with `typ=at+jwt`. Their `aud` identifie
 
 ## Local setup
 
-Requirements: Node.js 24, npm, and PostgreSQL. Docker is optional but is the easiest way to run PostgreSQL.
+Requirements: Node.js 24, Bun, and PostgreSQL 14 or newer. Docker is not required.
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres
-npm install
-npm run keys:generate
+bun install
+# Point DATABASE_URL in .env at any PostgreSQL 14+ instance.
+bun run keys:generate
 ```
 
 Put the generated JSON into `OIDC_JWKS_JSON`, configure Microsoft Entra, then register this redirect URI in the Entra application:
@@ -48,10 +48,10 @@ http://localhost:3000/oauth/callback/microsoft
 Start the service:
 
 ```bash
-npm run dev
+bun run dev
 ```
 
-Development serves the React build and OAuth endpoints from Hono at `http://localhost:3000`. `npm run dev` starts Hono plus a Vite build watcher; edits under `web/src/*` rebuild automatically, then reload the browser to see the change. Use `npm run dev:auth` when you only need the backend.
+Development serves the React build and OAuth endpoints from Hono at `http://localhost:3000`. `bun run dev` starts Hono plus a Vite build watcher; edits under `web/src/*` rebuild automatically, then reload the browser to see the change. Use `bun run dev:auth` when you only need the backend.
 
 The server applies checked-in Drizzle migrations and idempotently upserts configured clients and resource servers during startup. Removed configuration entries are not automatically deleted.
 
@@ -84,8 +84,8 @@ To create a client directly in the database, pass its JSON definition without `c
 Remove a client from `OIDC_CLIENTS_JSON` before deleting it, otherwise the startup seed will create it again.
 
 ```bash
-npm run clients:add -- '{"name":"Example","clientSecret":"replace-with-a-long-secret","redirectUris":["https://example.test/callback"],"public":false,"resources":["urn:basis:api:example"]}'
-npm run clients:remove -- 3fa85f64-5717-4562-b3fc-2c963f66afa6
+bun run clients:add -- '{"name":"Example","clientSecret":"replace-with-a-long-secret","redirectUris":["https://example.test/callback"],"public":false,"resources":["urn:basis:api:example"]}'
+bun run clients:remove -- 3fa85f64-5717-4562-b3fc-2c963f66afa6
 ```
 
 ## Downstream BFF integration
@@ -121,17 +121,17 @@ Resource APIs that require immediate per-user revocation must also load the toke
 ## Development commands
 
 ```bash
-npm run typecheck
-npm test
-npm run build
-npm run db:generate
-npm run db:migrate
+bun run typecheck
+bun run test
+bun run build
+bun run db:generate
+bun run db:migrate
 ```
 
-PostgreSQL adapter integration tests are opt-in because they require Docker:
+PostgreSQL adapter integration tests are opt-in because they require a `DATABASE_URL`:
 
 ```bash
-RUN_POSTGRES_TESTS=1 npm test
+RUN_POSTGRES_TESTS=1 bun run test
 ```
 
 # API Errors:

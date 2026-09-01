@@ -9,12 +9,12 @@
 
 ## Build, Test, and Development Commands
 
-- `npm run dev` builds the UI, watches the backend, and watches UI builds.
-- `npm run dev:web` runs Vite’s development server for UI work.
-- `npm run typecheck` checks both server and web TypeScript projects.
-- `npm run build` creates the production web build and compiles server code to `dist/`.
-- `npm test` runs the Vitest suite; target a file with `npx vitest run src/app.test.ts`.
-- `npm run db:generate` creates a Drizzle migration after changing `src/database/schema.ts`; use `npm run db:migrate` to apply migrations with `DATABASE_URL` set.
+- `bun run dev` builds the UI, watches the backend, and watches UI builds.
+- `bun run dev:web` runs Vite’s development server for UI work.
+- `bun run typecheck` checks both server and web TypeScript projects.
+- `bun run build` creates the production web build and compiles server code to `dist/`.
+- `bun run test` runs the Vitest suite; target a file with `bunx vitest run src/app.test.ts`.
+- `bun run db:generate` creates a Drizzle migration after changing `src/database/schema.ts`; use `bun run db:migrate` to apply migrations with `DATABASE_URL` set.
 
 ## Coding Style & Naming Conventions
 
@@ -22,7 +22,7 @@ Use TypeScript with ESM imports and match the formatting of the surrounding file
 
 ## Testing Guidelines
 
-Use Vitest for unit and route tests. Name tests as behavior statements, for example `it("redirects browser logout requests to the original authorization URL", ...)`. Add or update tests for authorization, token, identity, configuration, and migration-affecting behavior. PostgreSQL integration tests require Docker and `RUN_POSTGRES_TESTS=1`.
+Use Vitest for unit and route tests. Name tests as behavior statements, for example `it("redirects browser logout requests to the original authorization URL", ...)`. Add or update tests for authorization, token, identity, configuration, and migration-affecting behavior. PostgreSQL integration tests require a `DATABASE_URL` and `RUN_POSTGRES_TESTS=1`; they no longer need Docker.
 
 ## Commit & Pull Request Guidelines
 

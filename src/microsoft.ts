@@ -6,6 +6,17 @@ import type { Database } from "./database/client.js";
 import { upstreamAuthRequests } from "./database/schema.js";
 import type { IdentityService } from "./identity.js";
 
+const MICROSOFT_SCOPE = "openid profile email User.Read";
+
+/** Derive email verification from the upstream assertion instead of trusting a constant. */
+export function resolveEmailVerified(userInfo: unknown, claims: unknown): boolean {
+  const valueOf = (source: unknown) =>
+    source && typeof source === "object" && "email_verified" in source
+      ? (source as { email_verified?: unknown }).email_verified
+      : undefined;
+  return valueOf(userInfo) === true || valueOf(claims) === true;
+}
+
 function defaultProfilePicture(issuer: string, subject: string) {
   return { data: toPng(`${issuer}:${subject}`, 512), contentType: "image/png" };
 }
@@ -62,7 +73,7 @@ export function createMicrosoftService(
     });
     return client.buildAuthorizationUrl(configuration, {
       redirect_uri: `${appConfig.issuer}/oauth/callback/microsoft`,
-      scope: "openid profile email User.ReadWrite.All",
+      scope: MICROSOFT_SCOPE,
       response_type: "code",
       state,
       nonce,
@@ -106,7 +117,7 @@ export function createMicrosoftService(
       issuer: claims.iss,
       subject: claims.sub,
       email: emailValue,
-      emailVerified: true,
+      emailVerified: resolveEmailVerified(userInfo, claims),
       displayName:
         typeof userInfo.name === "string"
           ? userInfo.name

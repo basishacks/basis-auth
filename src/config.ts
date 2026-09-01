@@ -164,6 +164,10 @@ export async function loadConfig(source: NodeJS.ProcessEnv = process.env): Promi
   if (cookieKeys.some((key) => key.length < 32)) {
     throw new Error("Every OIDC cookie key must be at least 32 characters");
   }
+  const placeholderPattern = /replace-with|changeme|change-me|your-.+-here|placeholder/i;
+  if (cookieKeys.some((key) => placeholderPattern.test(key))) {
+    throw new Error("OIDC_COOKIE_KEYS must be replaced with real randomly generated values");
+  }
   if (env.NODE_ENV === "production" && cookieKeys.length < 2) {
     throw new Error("At least two OIDC cookie keys are required in production");
   }

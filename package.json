@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.3.14",
   "engines": {
     "node": ">=24"
   },
@@ -10,11 +11,11 @@
     "esbuild": "0.28.1"
   },
   "scripts": {
-    "dev": "vite build --config web/vite.config.ts && concurrently --kill-others-on-fail -n auth,client \"node --watch --import tsx src/index.ts\" \"vite build --watch --config web/vite.config.ts\"",
+    "dev": "vite build --config web/vite.config.ts && concurrently --kill-others-on-fail -n auth,build,web \"node --watch --import tsx src/index.ts\" \"vite build --watch --config web/vite.config.ts\" \"vite --config web/vite.config.ts\"",
     "dev:auth": "node --watch --import tsx src/index.ts",
     "dev:client": "vite build --watch --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "build": "npm run build:web && tsc -p tsconfig.build.json",
+    "build": "bun run build:web && tsc -p tsconfig.build.json",
     "build:web": "vite build --config web/vite.config.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
@@ -29,6 +30,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.12",
     "@hugeicons/core-free-icons": "^4.2.3",
+    "lru-cache": "^11.0.2",
     "@hugeicons/react": "^1.1.9",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -49,7 +51,6 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "@testcontainers/postgresql": "^12.0.4",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.2",
     "@types/node": "24.10.1",
@@ -57,6 +58,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
     "jsdom": "27.2.0",

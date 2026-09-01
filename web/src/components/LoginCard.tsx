@@ -253,7 +253,7 @@ export function LoginCard({
                     
 
                     <div className="hover:underline underline-offset-2 flex gap-1 cursor-pointer text-devconnect items-center">
-                        <a className="text-xs" href={"https://bisz.dev/DevConnectAbuse?ref=" + stat.login?.client.id } target="_blank">Report Abuse</a>
+                        <a className="text-xs" href={"https://bisz.dev/DevConnectAbuse?ref=" + stat.login?.client?.id } target="_blank">Report Abuse</a>
                         <ExternalLink className="size-3"></ExternalLink>
                     </div>
                     

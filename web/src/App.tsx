@@ -26,7 +26,10 @@ export function App() {
 
   const resetToLogin = async () => {
     const res = await fetch("/oauth/interaction", { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error("Could not restart login");
+    if (!res.ok) {
+      window.location.replace("/oauth/authorize");
+      return;
+    }
     const loginContent = await res.json();
     await delay(500);
     setStatus({ loading: false, page: "none", login: undefined });
@@ -59,6 +62,11 @@ export function App() {
 
 
       const res = await fetch("/oauth/interaction", { headers: { Accept: "application/json" } });
+      if (!res.ok) {
+        // No interaction cookie — start the OAuth flow
+        window.location.replace("/oauth/authorize");
+        return;
+      }
       const loginContent = await res.json()
       await delay(300);
 

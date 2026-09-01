@@ -140,7 +140,7 @@ describe("SSO account API", () => {
     config,
     {} as OAuthService,
     { publicJwks: { keys: [] } } as unknown as KeyService,
-    { find: vi.fn().mockResolvedValue({ userId: user.id, expiresAt: loginExpiresAt }) } as unknown as SessionService,
+    { find: vi.fn((token?: string) => (token ? { userId: user.id, expiresAt: loginExpiresAt } : undefined)) } as unknown as SessionService,
     { findUser: vi.fn().mockResolvedValue(user) } as unknown as IdentityService,
     {} as MicrosoftService,
   );
@@ -161,11 +161,93 @@ describe("SSO account API", () => {
     });
   });
 
-  it("streams a public stored profile picture", async () => {
-    const response = await accountApp.request(`/api/picture/${user.id}`);
+  it("streams a stored profile picture only to the authenticated owner", async () => {
+    const response = await accountApp.request(`/api/picture/${user.id}`, {
+      headers: { Cookie: "basis_sso=session-token" },
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/png");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(user.picture);
+  });
+
+  it("refuses profile pictures without an SSO session", async () => {
+    const response = await accountApp.request(`/api/picture/${user.id}`);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
+  });
+
+  it("refuses profile pictures for a different user", async () => {
+    const response = await accountApp.request("/api/picture/different-user-id", {
+      headers: { Cookie: "basis_sso=session-token" },
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
+  });
+});
+
+describe("discovery caching", () => {
+  it("caches the OpenID configuration", async () => {
+    const response = await app.request("/.well-known/openid-configuration");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("max-age=300");
+  });
+});
+
+describe("CORS", () => {
+  const ORIGIN = "https://app.example.test";
+  const previous = process.env.CORS_ALLOWED_ORIGINS;
+  process.env.CORS_ALLOWED_ORIGINS = ORIGIN;
+  const corsApp = createApp(
+    config,
+    {} as OAuthService,
+    { publicJwks: { keys: [] } } as unknown as KeyService,
+    {} as SessionService,
+    {} as IdentityService,
+    {} as MicrosoftService,
+  );
+  process.env.CORS_ALLOWED_ORIGINS = previous;
+
+  it("echoes an allowed origin on CORS-enabled routes", async () => {
+    const response = await corsApp.request("/oauth/userinfo", {
+      headers: { Origin: ORIGIN },
+    });
+    expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+  });
+
+  it("omits CORS headers for a disallowed origin", async () => {
+    const response = await corsApp.request("/oauth/userinfo", {
+      headers: { Origin: "https://evil.example.test" },
+    });
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
+
+describe("rate limiting", () => {
+  it("rejects the token endpoint after the burst budget is exhausted", async () => {
+    const oauth = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({ access_token: "t" }),
+    } as unknown as OAuthService;
+    const limitedApp = createApp(
+      config,
+      oauth,
+      { publicJwks: { keys: [] } } as unknown as KeyService,
+      {} as SessionService,
+      {} as IdentityService,
+      {} as MicrosoftService,
+    );
+    let sawLimit = false;
+    for (let i = 0; i < 200; i += 1) {
+      const response = await limitedApp.request("/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "grant_type=authorization_code",
+      });
+      if (response.status === 429) {
+        sawLimit = true;
+        break;
+      }
+    }
+    expect(sawLimit).toBe(true);
   });
 });
 

@@ -19,6 +19,9 @@ export default defineConfig({
     proxy: {
       "/oauth": "http://localhost:3000",
       "/.well-known": "http://localhost:3000",
+      "/api": "http://localhost:3000",
+      "/health": "http://localhost:3000",
+      "/assets": "http://localhost:3000",
     },
   },
 });
