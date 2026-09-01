@@ -172,7 +172,8 @@ export function createApp(
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   app.get("/", async (c) => {
-    return c.redirect("/.well-known/openid-configuration");
+    //return c.redirect("/.well-known/openid-configuration");
+    return c.body(null, 400)
   });
 
   async function currentSession(c: Context) {
